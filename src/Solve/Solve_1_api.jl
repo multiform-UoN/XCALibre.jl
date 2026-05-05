@@ -2,6 +2,7 @@ export SolverSetup, Runtime, Schemes
 export explicit_relaxation!, implicit_relaxation!, implicit_relaxation_diagdom!, setReference!
 export solve_system!
 export solve_equation!
+export linearize_bcs
 export residual!
 export AdaptiveTimeStepping
 
@@ -426,6 +427,26 @@ function setReference!(pEqn::E, pRef, cellID, config) where E<:ModelEquation
         kernel! = _setReference!(_setup(backend, workgroup, ndrange)...)
         kernel!(nzval, colval, rowptr, b, pRef, cellID)
     end
+end
+
+"""
+    linearize_bcs(BCs, model)
+
+Returns a new NamedTuple of boundary conditions where any NonLinearRobin BCs
+have been linearized based on the current values in the model's fields.
+"""
+function linearize_bcs(BCs, model)
+    new_bcs_dict = Dict{Symbol, Any}()
+    for field_name in propertynames(BCs)
+        field_bcs = getproperty(BCs, field_name)
+        if hasproperty(model, field_name)
+            field = getproperty(model, field_name)
+            new_bcs_dict[field_name] = Discretise.update_nonlinear_robin(field_bcs, field)
+        else
+            new_bcs_dict[field_name] = field_bcs
+        end
+    end
+    return NamedTuple(new_bcs_dict)
 end
 
 @kernel function _setReference!(nzval, colval, rowptr, b, pRef, cellID)

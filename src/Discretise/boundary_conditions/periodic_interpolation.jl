@@ -26,7 +26,7 @@ end
         # w = delta2/delta
 
         Pf = face.centre - cell.centre
-        PN = (pcell.centre - transform.distance) - cell.centre
+        PN = transform_point(transform, pcell.centre) - cell.centre
         normal = face.normal
         wn = (Pf⋅normal)/(PN⋅normal)
         w = one(wn) - wn
@@ -60,7 +60,7 @@ end
         # w = delta2/delta
 
         Pf = face.centre - cell.centre
-        PN = (pcell.centre - transform.distance) - cell.centre
+        PN = transform_point(transform, pcell.centre) - cell.centre
         normal = face.normal
         wn = (Pf⋅normal)/(PN⋅normal)
         w = one(wn) - wn

@@ -46,14 +46,31 @@ Adapt.@adapt_structure PeriodicValue
 end
 Adapt.Adapt.@adapt_structure LinearTransform
 
+@kwdef struct RotationalTransform{T<:AbstractMatrix, V<:AbstractVector}
+    rotation::T
+    origin::V
+end
+Adapt.Adapt.@adapt_structure RotationalTransform
+
+@inline transform_point(t::LinearTransform, p) = p - t.distance
+@inline transform_point(t::RotationalTransform, p) = t.rotation * (p - t.origin) + t.origin
+
 adapt_value(value::PeriodicValue, mesh) = begin
     I = _get_int(mesh)
     F = _get_float(mesh)
     (; patchID, transform, face_map, isparent)  = value
-    (; distance) = transform
+    
+    if typeof(transform) <: LinearTransform
+        (; distance) = transform
+        new_transform = LinearTransform(SVector{3,F}(distance))
+    else
+        (; rotation, origin) = transform
+        new_transform = RotationalTransform(SMatrix{3,3,F}(rotation), SVector{3,F}(origin))
+    end
+    
     @allowscalar PeriodicValue(
         I(patchID), 
-        LinearTransform(SVector{3,F}(distance)), 
+        new_transform, 
         I.(face_map), 
         isparent
     )
@@ -273,7 +290,7 @@ end
     pface = faces[pfID]
     pcellID = pface.ownerCells[1]
     C1 = cell.centre
-    C2 = cells[pcellID].centre - transform.distance
+    C2 = transform_point(transform, cells[pcellID].centre)
 
     # for improved accuracy this needs to include the discretisation used for noncorrection
     d = C2 - C1
@@ -327,7 +344,7 @@ end
     pface = faces[pfID]
     pcellID = pface.ownerCells[1]
     C1 = cell.centre
-    C2 = cells[pcellID].centre - transform.distance
+    C2 = transform_point(transform, cells[pcellID].centre)
     Cf = face.centre
     n = face.normal
 
@@ -406,7 +423,7 @@ end
     pface = faces[pfID]
     pcellID = pface.ownerCells[1]
     C1 = cell.centre
-    C2 = cells[pcellID].centre - transform.distance
+    C2 = transform_point(transform, cells[pcellID].centre)
     Cf = face.centre
     n = face.normal
 
