@@ -1,6 +1,5 @@
 export AbstractOperator, AbstractSource, AbstractEquation   
 export Operator, Source, Src
-export Time, Laplacian, Divergence, Si, NonLinearSi, Biharmonic, CoupledSi
 export Model, ScalarEquation, VectorEquation, ModelEquation, ScalarModel, VectorModel
 export nzval_index
 export spindex, spindex_csc, sparse_matrix_connectivity, extended_sparse_matrix_connectivity
@@ -58,11 +57,8 @@ function Adapt.adapt_structure(to, itp::NonLinearSi{Fun}) where {Fun}
     NonLinearSi(itp.func)
 end
 
-struct CoupledSi{PS}
     phi_source::PS
 end
-function Adapt.adapt_structure(to, itp::CoupledSi)
-    CoupledSi(Adapt.adapt(to, itp.phi_source))
 end
 
 # constructors
@@ -105,8 +101,6 @@ NonLinearSi(func::Function, phi) = Operator(
     nothing, phi, 1, NonLinearSi(func), nothing
 )
 
-CoupledSi(flux, phi_source, phi_target) = Operator(
-    flux, phi_target, 1, CoupledSi(phi_source), nothing
 )
 
 # SOURCES

@@ -79,6 +79,5 @@ end
     0.0, 0.0
 end
 
-@define_boundary_coupled Zerogradient begin
     0.0, 0.0
 end

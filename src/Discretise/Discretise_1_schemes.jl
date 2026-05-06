@@ -245,7 +245,6 @@ end
 
 # COUPLED IMPLICIT SOURCE (Block coupling)
 @inline function scheme!(
-    term::Operator{F,P,I,CoupledSi{PS},Fn}, 
     nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime
     )  where {F,P,I,PS,Fn}
     0.0, 0.0
@@ -253,7 +252,6 @@ end
 
 # This handles the off-diagonal block contribution: A_ij * phi_j
 @inline scheme_source!(
-    term::Operator{F,P,I,CoupledSi{PS},Fn}, cell, cID, cIndex, prev, runtime) where {F,P,I,PS,Fn} = begin
     
     # In a segregated solver, this term is treated like a standard source:
     # RHS -= k * phi_source_current
