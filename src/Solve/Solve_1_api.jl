@@ -431,67 +431,67 @@ function setReference!(pEqn::E, pRef, cellID, config) where E<:ModelEquation
 end
 
 """
-    linearize_physics(BCs, model)
+    linearize_physics(BCs, model_eqn::ModelEquation; susp=true)
 
 Returns a new (BCs, model_equation) pair where any NonLinearRobin BCs
 and NonLinearSi source terms have been linearized based on the current 
 values in the model's fields.
 """
-function linearize_physics(BCs, model_eqn::ModelEquation)
+function linearize_physics(BCs, model_eqn::ModelEquation; susp=true)
     # 1. Linearize BCs
     new_bcs = linearize_bcs(BCs, model_eqn)
     
     # 2. Linearize Model terms (Implicit sources)
-    new_model = _linearize_model_terms(model_eqn.model, model_eqn)
+    new_model = _linearize_model_terms(model_eqn.model, model_eqn; susp=susp)
     
     # 3. Create updated ModelEquation
     return new_bcs, @set model_eqn.model = new_model
 end
 
-function _linearize_model_terms(model::Model, model_eqn)
+function _linearize_model_terms(model::Model, model_eqn; susp=true)
     phi = get_phi(model_eqn)
     vals = phi.values
     
+    # We'll collect additional explicit source contributions here
+    extra_src = ScalarField(phi.mesh)
+    initialise!(extra_src, 0.0)
+
     new_terms = map(model.terms) do term
         if typeof(term.type) <: NonLinearSi
-            # Linearize term R(phi) ≈ R'(phi0)phi + (R(phi0) - R'(phi0)phi0)
-            # This returns an Operator{Si} for the implicit part 
-            # and we should ideally return a Source for the explicit part.
-            # XCALibre's Model handles terms and sources separately.
-            
-            # Since we can't easily add a Source to the tuple here without 
-            # refactoring Model, we'll return a special 'LinearizedNonLinearSi' 
-            # or just map it to an implicit Si and assume the user handles 
-            # the explicit part or we fix it in discretise!.
-            
-            # For now, let's just implement the logic to get the coefficients.
             func = term.type.func
-            
-            # We need to compute this per cell!
-            # XCALibre's Si operator takes a 'flux' field (the coefficient k).
-            # We create a new ScalarField to store the linearized coefficients.
             k_imp = ScalarField(phi.mesh)
             
-            # Use ForwardDiff to get derivatives per cell
-            # (Note: This is CPU-bound currently)
             for i in eachindex(vals)
                 v0 = vals[i]
                 dv = ForwardDiff.derivative(func, v0)
-                k_imp.values[i] = dv
+                r0 = func(v0)
+                
+                # Equation: ... + R(phi) = ...
+                # Newton: R(phi) ≈ dv * phi + (r0 - dv * v0)
+                # In XCALibre, Si(k, phi) adds k*vol to the diagonal.
+                # To help diagonal dominance (SuSp logic):
+                # If dv > 0, it adds to diagonal. Keep it implicit.
+                # If dv < 0, it might hurt diagonal. Make it explicit.
+                
+                if !susp || dv > 0
+                    k_imp.values[i] = dv
+                    extra_src.values[i] -= (r0 - dv * v0) # Explicit part: - (r0 - dv * v0)
+                else
+                    # Fully explicit
+                    k_imp.values[i] = 0.0
+                    extra_src.values[i] -= r0 # Explicit part: - r0
+                end
             end
-            
-            # Return a standard implicit Si operator
             return Si(k_imp, phi)
         else
             return term
         end
     end
     
-    # Handle explicit source part if needed. 
-    # For a clean implementation, NonLinearSi should probably be its own 
-    # category that handles both.
+    # Update sources with the explicit linearized parts
+    new_sources = (model.sources..., Source(extra_src))
     
-    return Model{typeof(model).parameters[1], typeof(model).parameters[2]}(new_terms, model.sources)
+    return Model{typeof(model).parameters[1], typeof(model).parameters[2]}(new_terms, new_sources)
 end
 
 function linearize_bcs(BCs, model_eqn::ModelEquation)
