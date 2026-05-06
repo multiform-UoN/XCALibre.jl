@@ -1,6 +1,62 @@
-export boundary_average
+export boundary_average, volume_average, sample_at_point
 export pressure_force, viscous_force
 export stress_tensor, wall_shear_stress
+
+"""
+    volume_average(field::ScalarField)
+
+Calculates the volume-weighted average of a scalar field over the entire domain.
+"""
+function volume_average(field::ScalarField)
+    mesh = field.mesh
+    vols = [cell.volume for cell in mesh.cells]
+    vol_tot = sum(vols)
+    return sum(field.values .* vols) / vol_tot
+end
+
+function volume_average(field::VectorField)
+    mesh = field.mesh
+    vols = [cell.volume for cell in mesh.cells]
+    vol_tot = sum(vols)
+    ux = sum(field.x.values .* vols) / vol_tot
+    uy = sum(field.y.values .* vols) / vol_tot
+    uz = sum(field.z.values .* vols) / vol_tot
+    return [ux, uy, uz]
+end
+
+"""
+    sample_at_point(field::ScalarField, point::SVector{3})
+
+Samples the field at the nearest cell centre to the provided point.
+(Simple nearest-neighbour sampling for now).
+"""
+function sample_at_point(field::ScalarField, point)
+    mesh = field.mesh
+    min_dist = Inf
+    nearest_cID = 1
+    for i in eachindex(mesh.cells)
+        dist = norm(mesh.cells[i].centre - point)
+        if dist < min_dist
+            min_dist = dist
+            nearest_cID = i
+        end
+    end
+    return field.values[nearest_cID]
+end
+
+function sample_at_point(field::VectorField, point)
+    mesh = field.mesh
+    min_dist = Inf
+    nearest_cID = 1
+    for i in eachindex(mesh.cells)
+        dist = norm(mesh.cells[i].centre - point)
+        if dist < min_dist
+            min_dist = dist
+            nearest_cID = i
+        end
+    end
+    return [field.x.values[nearest_cID], field.y.values[nearest_cID], field.z.values[nearest_cID]]
+end
 
 """
     pressure_force(patch::Symbol, p::ScalarField, rho)
