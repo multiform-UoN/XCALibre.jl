@@ -5,9 +5,9 @@ using Printf
 using Statistics
 
 # ==============================================================================
-# Example: Single Thin-Film Equation (Shallow Water / Viscous)
+# Example: Single Thin-Film Equation (Darcy)
 # ==============================================================================
-# PDE: ∂h/∂t = ∇ ⋅ ( (h³/3μ) ∇p ) where p = -γ ∇²h
+# PDE: ∂h/∂t = ∇ ⋅ ( (Kh/μ) ∇p ) where p = -γ ∇²h
 # Resulting in a 4th-order biharmonic-like equation for h.
 # ==============================================================================
 
@@ -24,19 +24,17 @@ mu = 1.0
 BCs = assign((h = [Zerogradient(b.name) for b in mesh.boundaries],), region=mesh_dev)
 schemes = (h = Schemes(time=Euler, laplacian=Linear),)
 solvers = (h = SolverSetup(solver=Bicgstab(), preconditioner=Jacobi(), convergence=1e-8, relax=1.0),)
-config = Configuration(solvers=solvers, schemes=schemes, runtime=Runtime(iterations=1, time_step=0.001), hardware=hardware, boundaries=BCs)
+config = Configuration(solvers=solvers, schemes=schemes, runtime=Runtime(iterations=1, time_step=0.001, write_interval=-1), hardware=hardware, boundaries=BCs)
 
 h = ScalarField(mesh_dev); initialise!(h, 0.1)
-h.values .+= 0.01 .* rand(length(h.values)) # Random perturbation
+h.values .+= 0.01 .* rand(length(h.values)) 
 
-@info "Solving Shallow Water Thin-Film (h³ mobility)..."
+@info "Solving Darcy Thin-Film (h mobility)..."
 for step in 1:10
     global h
-    # Mobility M = h³/3μ. We linearize this using our new Newton framework
-    # or just treat it as a coefficient for this simple test.
-    M_val = mean(h.values)^3 / (3.0 * mu)
+    # Mobility M = Kh/μ.
+    M_val = mean(h.values) / mu
     
-    # Using the Biharmonic operator for the 4th order surface tension part
     h_eqn = (
           Time{schemes.h.time}(h)
         + Biharmonic{schemes.h.laplacian}(ConstantScalar(gamma * M_val), h)

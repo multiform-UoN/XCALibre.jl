@@ -84,7 +84,7 @@ h.values .+= 0.001 .* rand(length(h.values))
 
 # 5. Solver Loop (Time Stepping + Outer Loops)
 # ------------------------------------------------------------------------------
-dt = config.runtime.time_step
+dt = config.runtime.dt
 n_steps = 50
 n_outer = 3 # PIMPLE-style iterations
 
