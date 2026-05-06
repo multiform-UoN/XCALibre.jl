@@ -95,3 +95,7 @@ end
 @define_boundary Dirichlet Si begin
     0.0, 0.0
 end
+
+@define_boundary_coupled Dirichlet begin
+    0.0, 0.0
+end

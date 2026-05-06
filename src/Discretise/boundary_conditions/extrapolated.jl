@@ -70,3 +70,7 @@ end
 @define_boundary Extrapolated Si begin
     0.0, 0.0
 end
+
+@define_boundary_coupled Extrapolated begin
+    0.0, 0.0
+end

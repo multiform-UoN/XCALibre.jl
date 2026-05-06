@@ -52,6 +52,17 @@ macro define_boundary(boundary, operator, definition)
     end |> esc
 end
 
+# Support for CoupledSi (Implicit source) - usually returns 0.0, 0.0 like Si
+macro define_boundary_coupled(boundary, definition)
+    quote
+        @inline (bc::$boundary)(
+            term::Operator{F,P,I,CoupledSi{PS},Fn}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+        ) where {F,P,I,PS,Fn} = @inbounds begin
+            $definition
+        end
+    end |> esc
+end
+
 macro define_boundary(boundary, operator, FieldType, definition)
     quote
         @inline (bc::$boundary)(term::Operator{F,P,I,$operator,Fn}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P<:$FieldType,I,Fn} = 
