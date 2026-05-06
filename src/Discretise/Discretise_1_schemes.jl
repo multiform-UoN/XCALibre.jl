@@ -10,25 +10,34 @@ cIndex - Index of the cell based on sparse matrix. Use to index "nzval_array"
 
 # SteadyState
 @inline function scheme!(
-    term::Operator{F,P,I,Time{SteadyState}}, 
-    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)  where {F,P,I}
+    term::Operator{F,P,I,Time{SteadyState},Fn}, 
+    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)  where {F,P,I,Fn}
     # nothing
     0.0, 0.0 # add types if this approach works
 end
+
+# IMPLICIT SOURCE
+@inline function scheme!(
+    term::Operator{F,P,I,Si,Fn}, 
+    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime
+    )  where {F,P,I,Fn}
+    0.0, 0.0
+end
+
 @inline scheme_source!(
-    term::Operator{F,P,I,Time{SteadyState}}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
+    term::Operator{F,P,I,Time{SteadyState},Fn}, cell, cID, cIndex, prev, runtime)  where {F,P,I,Fn} = begin
     0.0, 0.0
 end
 
 ## Euler
 @inline function scheme!(
-    term::Operator{F,P,I,Time{Euler}}, 
-    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)  where {F,P,I}
+    term::Operator{F,P,I,Time{Euler},Fn}, 
+    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)  where {F,P,I,Fn}
 
     0.0, 0.0 # add types if this approach works
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Time{Euler}}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
+    term::Operator{F,P,I,Time{Euler},Fn}, cell, cID, cIndex, prev, runtime)  where {F,P,I,Fn} = begin
         volume = cell.volume
         # To DO!!!!!
         # flux below is for current time - need to also store previous flux
@@ -42,13 +51,13 @@ end
 
 ## Crank-Nicholson
 @inline function scheme!(
-    term::Operator{F,P,I,Time{CrankNicolson}}, 
-    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)  where {F,P,I}
+    term::Operator{F,P,I,Time{CrankNicolson},Fn}, 
+    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)  where {F,P,I,Fn}
 
     0.0, 0.0 # add types if this approach works
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Time{CrankNicolson}}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
+    term::Operator{F,P,I,Time{CrankNicolson},Fn}, cell, cID, cIndex, prev, runtime)  where {F,P,I,Fn} = begin
         volume = cell.volume
         vol_rdt = term.flux[cID]*volume/runtime.dt[1]
         
@@ -61,9 +70,9 @@ end
 # LAPLACIAN
 
 @inline function scheme!(
-    term::Operator{F,P,I,Laplacian{Linear}}, 
+    term::Operator{F,P,I,Laplacian{Linear},Fn}, 
     nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I}
+    )  where {F,P,I,Fn}
 
     
     (; area, normal, delta, e) = face
@@ -98,7 +107,7 @@ end
     return ac, an
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Laplacian{Linear}}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
+    term::Operator{F,P,I,Laplacian{Linear},Fn}, cell, cID, cIndex, prev, runtime)  where {F,P,I,Fn} = begin
     0.0, 0.0
 end
 
@@ -106,9 +115,9 @@ end
 
 # Linear
 @inline function scheme!(
-    term::Operator{F,P,I,Divergence{Linear}}, 
+    term::Operator{F,P,I,Divergence{Linear},Fn}, 
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I}
+    )  where {F,P,I,Fn}
 
     w = face.weight
     # signbit(ns) ? w = one(w) - w : w
@@ -121,15 +130,15 @@ end
     return ac, an
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Divergence{Linear}}, cell, cID, cIndex, prev, runtime) where {F,P,I} = begin
+    term::Operator{F,P,I,Divergence{Linear},Fn}, cell, cID, cIndex, prev, runtime) where {F,P,I,Fn} = begin
     0.0, 0.0
 end
 
 # Upwind
 @inline function scheme!(
-    term::Operator{F,P,I,Divergence{Upwind}}, 
+    term::Operator{F,P,I,Divergence{Upwind},Fn}, 
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I}
+    )  where {F,P,I,Fn}
     # Calculate link coefficients
     ap = term.sign*(term.flux[fID]*ns)
     ac = max(ap, 0.0) 
@@ -137,15 +146,15 @@ end
     return ac, an
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Divergence{Upwind}}, cell, cID, cIndex, prev, runtime) where {F,P,I} = begin
+    term::Operator{F,P,I,Divergence{Upwind},Fn}, cell, cID, cIndex, prev, runtime) where {F,P,I,Fn} = begin
     0.0, 0.0
 end
 
 # LUST
 @inline function scheme!(
-    term::Operator{F,P,I,Divergence{LUST}}, 
+    term::Operator{F,P,I,Divergence{LUST},Fn}, 
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I}
+    )  where {F,P,I,Fn}
     
     w = face.weight
     signbit(ns) ? w = one(w) - w : w
@@ -161,15 +170,15 @@ end
     return ac, an
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Divergence{LUST}}, cell, cID, cIndex, prev, runtime) where {F,P,I} = begin
+    term::Operator{F,P,I,Divergence{LUST},Fn}, cell, cID, cIndex, prev, runtime) where {F,P,I,Fn} = begin
     0.0, 0.0
 end
 
 # BoundedUpwind
 @inline function scheme!(
-    term::Operator{F,P,I,Divergence{BoundedUpwind}}, 
+    term::Operator{F,P,I,Divergence{BoundedUpwind},Fn}, 
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I}
+    )  where {F,P,I,Fn}
     # $$\mathcal{D}_{bounded} = \sum_f \phi_f \psi_f - \psi_P \sum_f \phi_f$$
     # phif =  max(phif, 0) - max(-phi_f, 0)$
     # phif psif =  max(phif, 0) psi_P - max(-phi_f, 0)$ psi_N
@@ -179,16 +188,16 @@ end
     return ac, an
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Divergence{BoundedUpwind}}, cell, cID, cIndex, prev, runtime) where {F,P,I} = begin
+    term::Operator{F,P,I,Divergence{BoundedUpwind},Fn}, cell, cID, cIndex, prev, runtime) where {F,P,I,Fn} = begin
     0.0, 0.0
 end
 
 
 # BIHARMONIC OPERATOR
 @inline function scheme!(
-    term::Operator{F,P,I,Biharmonic{T}}, 
+    term::Operator{F,P,I,Biharmonic{T},Fn}, 
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I,T}
+    )  where {F,P,I,T,Fn}
     
     # Biharmonic: div(grad(div(grad(phi)))) 
     # For now, let's implement it using a 5-point stencil (1D) or 9-point (2D)
@@ -217,7 +226,7 @@ end
 end
 
 @inline scheme_source!(
-    term::Operator{F,P,I,Biharmonic{T}}, cell, cID, cIndex, prev, runtime) where {F,P,I,T} = begin
+    term::Operator{F,P,I,Biharmonic{T},Fn}, cell, cID, cIndex, prev, runtime) where {F,P,I,T,Fn} = begin
     0.0, 0.0
 end
 
@@ -226,7 +235,7 @@ end
 # needs to be replaced with a custom kernel that handles dual numbers
 # or manual Jacobian derivation. Currently CPU-only logic is in linearize_physics.
 @inline scheme_source!(
-    term::Operator{F,P,I,Si}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
+    term::Operator{F,P,I,Si,Fn}, cell, cID, cIndex, prev, runtime)  where {F,P,I,Fn} = begin
     
     # Retrieve and calculate flux for cell 
     flux = term.sign*term.flux[cID]*cell.volume # indexed with cID

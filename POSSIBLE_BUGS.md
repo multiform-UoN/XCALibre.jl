@@ -9,12 +9,7 @@ This document outlines potential bugs, architectural bottlenecks, and inconsiste
 *   **Issue:** The function currently forces a GPU to CPU data transfer via `adapt(CPU(), BC)` and `adapt(CPU(), faces)` during the matrix connectivity phase. This breaks the device execution chain and will cause massive stalls when scaling up to millions of cells on a GPU.
 *   **Recommendation:** Rewrite the connectivity builder as a native `KernelAbstractions` kernel that operates directly on device memory.
 
-## 2. VTK Output Writer Assumptions (Isothermal Model)
-**Severity: Medium**
-*   **Issue:** When setting `energy = Energy{Isothermal}()`, the framework correctly avoids allocating memory for the temperature field `T`. However, the VTK writer and some `save_output` routines seem to assume that all fields mapped in the base `Physics` struct exist. Attempting to write output on an `Isothermal` model without injecting a dummy `T` field crashes the simulation at the very end.
-*   **Recommendation:** Add a `hasproperty` or `isnothing` check in the VTK writer loop to gracefully skip unallocated physics fields.
-
-## 3. SparseMatrixCSR Allocation Overhead
+## 2. SparseMatrixCSR Allocation Overhead
 **Severity: Low/Medium**
 *   **File:** `src/ModelFramework/ModelFramework_0_types.jl`
 *   **Issue:** The `sparse_matrix_connectivity` allocates explicit `zeros(TF, length(i))` arrays inside the constructor. While this is only run during setup, it creates unnecessary Garbage Collection (GC) pressure. 

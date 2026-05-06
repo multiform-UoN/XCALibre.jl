@@ -3,6 +3,7 @@ module Solve
 using Adapt
 using Accessors
 using ForwardDiff
+using Enzyme
 using Krylov
 using Statistics
 using SparseArrays

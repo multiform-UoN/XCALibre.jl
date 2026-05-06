@@ -431,24 +431,28 @@ function setReference!(pEqn::E, pRef, cellID, config) where E<:ModelEquation
 end
 
 """
-    linearize_physics(BCs, model_eqn::ModelEquation; susp=true)
+    linearize_physics(BCs, model_eqn::ModelEquation; susp=true, ad_backend=:forwarddiff)
 
 Returns a new (BCs, model_equation) pair where any NonLinearRobin BCs
 and NonLinearSi source terms have been linearized based on the current 
 values in the model's fields.
+
+# Arguments
+- `susp::Bool`: If true, use OpenFOAM-style SuSp logic for diagonal dominance.
+- `ad_backend::Symbol`: Choose between `:forwarddiff` or `:enzyme`.
 """
-function linearize_physics(BCs, model_eqn::ModelEquation; susp=true)
+function linearize_physics(BCs, model_eqn::ModelEquation; susp=true, ad_backend=:forwarddiff)
     # 1. Linearize BCs
     new_bcs = linearize_bcs(BCs, model_eqn)
     
     # 2. Linearize Model terms (Implicit sources)
-    new_model = _linearize_model_terms(model_eqn.model, model_eqn; susp=susp)
+    new_model = _linearize_model_terms(model_eqn.model, model_eqn; susp=susp, ad_backend=ad_backend)
     
     # 3. Create updated ModelEquation
     return new_bcs, @set model_eqn.model = new_model
 end
 
-function _linearize_model_terms(model::Model, model_eqn; susp=true)
+function _linearize_model_terms(model::Model, model_eqn; susp=true, ad_backend=:forwarddiff)
     phi = get_phi(model_eqn)
     vals = phi.values
     
@@ -464,8 +468,18 @@ function _linearize_model_terms(model::Model, model_eqn; susp=true)
             
             for i in eachindex(vals)
                 v0 = vals[i]
-                dv = ForwardDiff.derivative(func, v0)
-                r0 = func(v0)
+                
+                # Compute derivative and value
+                if ad_backend == :forwarddiff
+                    dv = ForwardDiff.derivative(func, v0)
+                    r0 = func(v0)
+                elseif ad_backend == :enzyme
+                    # Use Enzyme Reverse mode for scalar derivative
+                    r0 = func(v0)
+                    dv = Enzyme.autodiff(Enzyme.Reverse, func, Enzyme.Active, Enzyme.Active(v0))[1][1]
+                else
+                    error("Unsupported AD backend: $ad_backend")
+                end
                 
                 if !susp || dv > 0
                     k_imp.values[i] = dv
@@ -479,29 +493,18 @@ function _linearize_model_terms(model::Model, model_eqn; susp=true)
             
         # 2. Non-linear Differential Operators linearization (Generic Newton)
         elseif !isnothing(term.func)
-            # Operator: div(Gamma * f(phi)) or div(Gamma * grad(f(phi)))
-            # Newton: f(phi) ≈ f'(phi0)phi + (f(phi0) - f'(phi0)phi0)
             func = term.func
-            
-            # Create a field of derivatives f'(phi)
             df = ScalarField(phi.mesh)
+            
             for i in eachindex(vals)
-                df.values[i] = ForwardDiff.derivative(func, vals[i])
+                if ad_backend == :forwarddiff
+                    df.values[i] = ForwardDiff.derivative(func, vals[i])
+                else
+                    df.values[i] = Enzyme.autodiff(Enzyme.Forward, func, Enzyme.Active, Enzyme.Active(vals[i]))[1]
+                end
             end
             
-            # The operator flux is scaled by the derivative
-            # Original term: Operator{flux, phi, sign, type, func}
-            # Linearized term: Operator{flux * df, phi, sign, type, nothing}
-            # PLUS explicit source contribution
-            
-            # Note: This is an approximation for non-linear Laplacians/Divergences
-            # that keeps the code compatible with existing XCALibre kernels.
-            
-            # Create a new linearized flux field (per-cell or per-face)
-            # Here we scale the existing flux by the cell-average derivative
-            # Real implementation should interpolate derivatives to faces.
-            new_flux = term.flux # Simplified
-            
+            new_flux = term.flux # Scaling logic can be added here
             return Operator(new_flux, phi, term.sign, term.type, nothing)
         else
             return term

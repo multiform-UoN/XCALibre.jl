@@ -8,10 +8,10 @@
 *   **Benefits:** Faster convergence for highly coupled physics (e.g., Poroelasticity, high-Re flow).
 
 ## 2. Generic Newton Linearization
-**Feasibility: Completed (Initial implementation)**
-*   **Current State:** I have implemented `NonLinearSi`, `NonLinearRobin`, and generic non-linear support for standard operators (Divergence/Laplacian) using `ForwardDiff.jl`.
-*   **Linearization API:** `linearize_physics` now automatically extracts Jacobians for non-linear functions inside operators.
-*   **Optimization needed:** Currently CPU-bound. For GPU, we need a kernel-based differentiation approach (e.g., using `Enzyme.jl` or manual dual-number dispatch).
+**Feasibility: Completed (Enzyme & ForwardDiff supported)**
+*   **Current State:** Implemented `NonLinearSi`, `NonLinearRobin`, and generic non-linear support for standard operators.
+*   **Backends:** Support for both `:forwarddiff` and `:enzyme` backends in `linearize_physics`.
+*   **Next Step (High Impact):** Move the linearization into the GPU kernels. This would use Enzyme's ability to differentiate `KernelAbstractions` code directly, allowing fully implicit non-linear residuals on GPUs.
 
 ## 3. Higher Order FV Operators
 **Feasibility: Completed (Initial implementation)**

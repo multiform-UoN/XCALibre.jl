@@ -98,11 +98,15 @@ C_eqn = (
 @reset C_eqn.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C_eqn))
 
 @info "Solving Non-Linear Implicit Source ADR..."
+# Choose AD backend: :forwarddiff or :enzyme
+ad_backend = :enzyme 
+
 for i in 1:100
     # 6.1 AUTOMATIC LINEARIZATION
-    # This uses ForwardDiff to compute R'(C) and updates the equation terms
+    # This uses the specified backend (Enzyme or ForwardDiff) 
+    # to compute derivatives and update the system matrix.
     global C_eqn
-    updated_bcs, C_eqn = linearize_physics(BCs, C_eqn)
+    updated_bcs, C_eqn = linearize_physics(BCs, C_eqn; susp=true, ad_backend=ad_backend)
     
     # 6.2 Solve
     # We must call discretise! manually or use solve_equation! with the new eqn
@@ -118,3 +122,9 @@ for i in 1:100
 end
 
 @info "Non-linear Source ADR example completed!"
+
+# 7. Save Results (Verify VTK fix for Isothermal)
+@info "Saving Results to VTK..."
+writer = initialise_writer(VTK(), mesh_dev)
+# This would normally crash if T was missing, but our fix handles it!
+save_output(model, writer, 1, 1.0, config)

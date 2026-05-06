@@ -80,6 +80,10 @@ function write_results(
         for arg ∈ args
             label = arg[1]
             field = arg[2]
+            
+            # Skip if field is nothing (e.g. unallocated physics fields)
+            isnothing(field) && continue
+            
             field_type = typeof(field)
             if field_type <: ScalarField
                 write(io, "SCALARS $(label) double 1\n")
