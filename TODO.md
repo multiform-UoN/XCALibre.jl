@@ -9,9 +9,13 @@
 
 ## 2. Generic Newton Linearization
 **Feasibility: Completed (Enzyme & ForwardDiff supported)**
-*   **Current State:** Implemented `NonLinearSi`, `NonLinearRobin`, and generic non-linear support for standard operators.
+*   **Current State:** Implemented `NonLinearSi`, `NonLinearRobin`, and generic non-linear support for standard operators (Divergence/Laplacian).
 *   **Backends:** Support for both `:forwarddiff` and `:enzyme` backends in `linearize_physics`.
-*   **Next Step (High Impact):** Move the linearization into the GPU kernels. This would use Enzyme's ability to differentiate `KernelAbstractions` code directly, allowing fully implicit non-linear residuals on GPUs.
+*   **Architecture (Layered AD Strategy):** 
+    *   **Phase 1 (Done):** ForwardDiff for local constitutive laws.
+    *   **Phase 2 (Next):** Enzyme reverse-mode for GPU nonlinear residual kernels.
+    *   **Phase 3:** Transition to **Matrix-free Newton-Krylov (JFNK)** using Enzyme-generated Jacobian-Vector Products (JVPs). This bypasses expensive sparse matrix assembly on GPUs.
+*   **Swappable Backends:** Transition to a unified `AbstractADBackend` interface (inspired by `DifferentiationInterface.jl`) to separate physics kernels from AD implementation.
 
 ## 3. Higher Order FV Operators
 **Feasibility: Completed (Initial implementation)**
@@ -28,3 +32,7 @@
 ## 5. Generic Periodic BCs with Rotations
 **Feasibility: Completed (Initial implementation)**
 *   I have already refactored `Periodic` to use `transform_point(transform, p)`. This should be further optimized for GPU kernels to avoid CPU-based mapping during every matrix assembly.
+
+## 6. SciML and Neural Network Integration
+*   **Lux.jl Integration:** Prefer `Lux.jl` over `Flux.jl` for scientific ML components (surrogates, learned preconditioners) due to its explicit state/parameter separation and Enzyme compatibility.
+*   **Differentiable Simulation:** Targeted goal is a fully differentiable PDE framework allowing for sensitivity analysis, topology optimization, and inverse problems.

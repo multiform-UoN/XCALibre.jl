@@ -39,16 +39,16 @@ end
 Adapt.@adapt_structure JacobiSmoother
 
 JacobiSmoother(mesh::AbstractMesh) = begin
-    x = zeros(_get_float(mesh), length(mesh.cells))
     backend = _get_backend(mesh)
-    JacobiSmoother(5, one(_get_int(mesh)), adapt(backend, x))
+    x = KernelAbstractions.zeros(backend, _get_float(mesh), length(mesh.cells))
+    JacobiSmoother(5, one(_get_int(mesh)), x)
 end
 
 JacobiSmoother(; domain, loops, omega=2/3) = begin
-    x = zeros(_get_float(domain), length(domain.cells))
     backend = _get_backend(domain)
+    x = KernelAbstractions.zeros(backend, _get_float(domain), length(domain.cells))
     F = _get_float(domain)
-    JacobiSmoother(loops, F(omega), adapt(backend, x))
+    JacobiSmoother(loops, F(omega), x)
 end
 
 apply_smoother!(smoother::Nothing, x, A, b, hardware) = nothing

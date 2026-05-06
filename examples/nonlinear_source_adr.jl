@@ -101,20 +101,26 @@ C_eqn = (
 # Choose AD backend: :forwarddiff or :enzyme
 ad_backend = :enzyme 
 
+total_time = 0.0
 for i in 1:100
+    global C_eqn, total_time
     # 6.1 AUTOMATIC LINEARIZATION
-    # This uses the specified backend (Enzyme or ForwardDiff) 
-    # to compute derivatives and update the system matrix.
-    global C_eqn
+    iter_start = time_ns()
+
     updated_bcs, C_eqn = linearize_physics(BCs, C_eqn; susp=true, ad_backend=ad_backend)
-    
+
     # 6.2 Solve
-    # We must call discretise! manually or use solve_equation! with the new eqn
     res = solve_equation!(C_eqn, C, updated_bcs.C, solvers.C, config)
-    
+
+    iter_end = time_ns()
+    iter_time = (iter_end - iter_start) / 1e9
+    total_time += iter_time
+
     if i % 10 == 0
-        @printf("Iteration %d, C Res: %.2e, Mean C: %.4f\n", i, res, mean(C.values))
+        @printf("Iteration %d, C Res: %.2e, Mean C: %.4f, Time: %.4fs\n", 
+                i, res, mean(C.values), iter_time)
     end
+
     if res < solvers.C.convergence
         @info "Converged at iteration $i"
         break

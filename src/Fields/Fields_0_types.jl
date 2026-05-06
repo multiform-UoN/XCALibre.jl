@@ -391,12 +391,41 @@ function initialise!(v::AbstractVectorField, vec::AbstractVector)
     nothing
 end
 
-function initialise!(s::AbstractScalarField, value::V) where V
+function initialise!(s::ScalarField, value::Number)
     s_type = eltype(s.values)
     if s_type <: Number
         s.values .= convert(s_type, value)
     else
         throw("ScalarFields should be initialised with numbers. The value provided is of type $(typeof(value))")
+    end
+    nothing
+end
+
+"""
+    initialise!(field, func::Function)
+
+Initialises a field by evaluating the function at each cell centre.
+The function should have the signature `f(x, y, z)`.
+"""
+function initialise!(s::ScalarField, func::Function)
+    mesh = s.mesh
+    cells = mesh.cells
+    for i in eachindex(s.values)
+        c = cells[i].centre
+        s.values[i] = func(c[1], c[2], c[3])
+    end
+    nothing
+end
+
+function initialise!(v::VectorField, func::Function)
+    mesh = v.mesh
+    cells = mesh.cells
+    for i in eachindex(v.x.values)
+        c = cells[i].centre
+        val = func(c[1], c[2], c[3])
+        v.x.values[i] = val[1]
+        v.y.values[i] = val[2]
+        v.z.values[i] = val[3]
     end
     nothing
 end

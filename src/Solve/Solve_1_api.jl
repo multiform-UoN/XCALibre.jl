@@ -496,16 +496,56 @@ function _linearize_model_terms(model::Model, model_eqn; susp=true, ad_backend=:
             func = term.func
             df = ScalarField(phi.mesh)
             
+            # Compute derivatives per cell
             for i in eachindex(vals)
                 if ad_backend == :forwarddiff
                     df.values[i] = ForwardDiff.derivative(func, vals[i])
                 else
-                    df.values[i] = Enzyme.autodiff(Enzyme.Forward, func, Enzyme.Active, Enzyme.Active(vals[i]))[1]
+                    df.values[i] = Enzyme.autodiff(Enzyme.Reverse, func, Enzyme.Active, Enzyme.Active(vals[i]))[1][1]
                 end
             end
             
-            new_flux = term.flux # Scaling logic can be added here
-            return Operator(new_flux, phi, term.sign, term.type, nothing)
+            # Linearized term: Operator{flux * f'(phi0), phi, sign, type, nothing}
+            # Operators (Divergence, Laplacian) in XCALibre kernels expect face-based fluxes.
+            df_f = FaceScalarField(phi.mesh)
+            mesh = phi.mesh
+            for fID in eachindex(df_f.values)
+                face = mesh.faces[fID]
+                c1 = face.ownerCells[1]
+                if length(face.ownerCells) > 1
+                    c2 = face.ownerCells[2]
+                    # Simple linear interpolation
+                    df_f.values[fID] = 0.5 * (df.values[c1] + df.values[c2])
+                else
+                    # Boundary face
+                    df_f.values[fID] = df.values[c1]
+                end
+            end
+
+            linearized_flux = FaceScalarField(phi.mesh)
+            
+            # Extract underlying values from term.flux (could be Constant, ScalarField or FaceScalarField)
+            if typeof(term.flux) <: FaceScalarField
+                linearized_flux.values .= term.flux.values .* df_f.values
+            elseif typeof(term.flux) <: ScalarField
+                # Need to interpolate original flux to faces too if it is not already
+                # but usually Laplacian flux is face-based? No,nueff is FaceScalarField.
+                # If it's a ScalarField, we interpolate.
+                for fID in eachindex(linearized_flux.values)
+                    face = mesh.faces[fID]
+                    c1 = face.ownerCells[1]
+                    if length(face.ownerCells) > 1
+                        c2 = face.ownerCells[2]
+                        linearized_flux.values[fID] = 0.5 * (term.flux.values[c1] + term.flux.values[c2]) * df_f.values[fID]
+                    else
+                        linearized_flux.values[fID] = term.flux.values[c1] * df_f.values[fID]
+                    end
+                end
+            else # ConstantScalar
+                linearized_flux.values .= term.flux.values .* df_f.values
+            end
+            
+            return Operator(linearized_flux, phi, term.sign, term.type, nothing)
         else
             return term
         end
