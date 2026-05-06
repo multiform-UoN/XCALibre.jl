@@ -401,6 +401,24 @@ function initialise!(s::ScalarField, value::Number)
     nothing
 end
 
+function initialise!(s::FaceScalarField, value::Number)
+    s_type = eltype(s.values)
+    if s_type <: Number
+        s.values .= convert(s_type, value)
+    else
+        throw("FaceScalarFields should be initialised with numbers. The value provided is of type $(typeof(value))")
+    end
+    nothing
+end
+
+function initialise!(v::FaceVectorField, value::AbstractVector)
+    @assert length(value) == 3 "Vectors should have 3 components"
+    initialise!(v.x, value[1])
+    initialise!(v.y, value[2])
+    initialise!(v.z, value[3])
+    nothing
+end
+
 """
     initialise!(field, func::Function)
 
