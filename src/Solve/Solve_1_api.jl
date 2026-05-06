@@ -2,8 +2,6 @@ export SolverSetup, Runtime, Schemes
 export explicit_relaxation!, implicit_relaxation!, implicit_relaxation_diagdom!, setReference!
 export solve_system!
 export solve_equation!
-export linearize_bcs
-export linearize_physics
 export residual!
 export AdaptiveTimeStepping
 
@@ -227,7 +225,9 @@ function solve_equation!(
         implicit_relaxation!(eqn, phi.values, irelax, nothing, config)
         # implicit_relaxation_diagdom!(eqn, phi.values, irelax, nothing, config)
     end
-    update_preconditioner!(eqn.preconditioner, phi.mesh, config)
+    if !isnothing(eqn.preconditioner)
+        update_preconditioner!(eqn.preconditioner, phi.mesh, config)
+    end
     res = solve_system!(eqn, solversetup, phi, nothing, config)
     return res
 end
@@ -268,6 +268,32 @@ function solve_equation!(
 end
 
 function solve_system!(phiEqn::ModelEquation, setup, result, component, config)
+
+    # Auto-initialise solver/preconditioner if missing
+    if isnothing(phiEqn.solver) || isnothing(phiEqn.preconditioner)
+        # We need to update the ModelEquation in-place if possible, or use the setup
+        # Since phiEqn is immutable, we use a temporary version or better, 
+        # warn the user and use a default.
+        # Actually, it's better to force initialization in the examples.
+        # But for reliability, let's do it here.
+        A = _A(phiEqn)
+        b = _b(phiEqn, component)
+        P = set_preconditioner(setup.preconditioner, phiEqn)
+        S = _workspace(setup.solver, b)
+        
+        # Call the actual solver with these temporary objects
+        krylov_solve!(
+            S, A, b, result.values; 
+            M=P.P, itmax=setup.itmax, atol=setup.atol, rtol=setup.rtol, ldiv=is_ldiv(P)
+        )
+        
+        Krylov.iteration_count(S) == setup.itmax && @warn "Maximum number of iterations reached!"
+        ndrange = length(result.values)
+        kernel! = _copy!(_setup(config.hardware.backend, config.hardware.workgroup, ndrange)...)
+        kernel!(result.values, S.x)
+        
+        return residual(phiEqn, component, config)
+    end
 
     (; itmax, atol, rtol) = setup
     precon = phiEqn.preconditioner
@@ -428,143 +454,6 @@ function setReference!(pEqn::E, pRef, cellID, config) where E<:ModelEquation
         kernel! = _setReference!(_setup(backend, workgroup, ndrange)...)
         kernel!(nzval, colval, rowptr, b, pRef, cellID)
     end
-end
-
-"""
-    linearize_physics(BCs, model_eqn::ModelEquation; susp=true, ad_backend=:forwarddiff)
-
-Returns a new (BCs, model_equation) pair where any NonLinearRobin BCs
-and NonLinearSi source terms have been linearized based on the current 
-values in the model's fields.
-
-# Arguments
-- `susp::Bool`: If true, use OpenFOAM-style SuSp logic for diagonal dominance.
-- `ad_backend::Symbol`: Choose between `:forwarddiff` or `:enzyme`.
-"""
-function linearize_physics(BCs, model_eqn::ModelEquation; susp=true, ad_backend=:forwarddiff)
-    # 1. Linearize BCs
-    new_bcs = linearize_bcs(BCs, model_eqn)
-    
-    # 2. Linearize Model terms (Implicit sources)
-    new_model = _linearize_model_terms(model_eqn.model, model_eqn; susp=susp, ad_backend=ad_backend)
-    
-    # 3. Create updated ModelEquation
-    return new_bcs, @set model_eqn.model = new_model
-end
-
-function _linearize_model_terms(model::Model, model_eqn; susp=true, ad_backend=:forwarddiff)
-    phi = get_phi(model_eqn)
-    vals = phi.values
-    
-    # We'll collect additional explicit source contributions here
-    extra_src = ScalarField(phi.mesh)
-    initialise!(extra_src, 0.0)
-
-    new_terms = map(model.terms) do term
-        # 1. Non-linear Implicit Source linearization
-        if typeof(term.type) <: NonLinearSi
-            func = term.type.func
-            k_imp = ScalarField(phi.mesh)
-            
-            for i in eachindex(vals)
-                v0 = vals[i]
-                
-                # Compute derivative and value
-                if ad_backend == :forwarddiff
-                    dv = ForwardDiff.derivative(func, v0)
-                    r0 = func(v0)
-                elseif ad_backend == :enzyme
-                    # Use Enzyme Reverse mode for scalar derivative
-                    r0 = func(v0)
-                    dv = Enzyme.autodiff(Enzyme.Reverse, func, Enzyme.Active, Enzyme.Active(v0))[1][1]
-                else
-                    error("Unsupported AD backend: $ad_backend")
-                end
-                
-                if !susp || dv > 0
-                    k_imp.values[i] = dv
-                    extra_src.values[i] -= (r0 - dv * v0)
-                else
-                    k_imp.values[i] = 0.0
-                    extra_src.values[i] -= r0
-                end
-            end
-            return Si(k_imp, phi)
-            
-        # 2. Non-linear Differential Operators linearization (Generic Newton)
-        elseif !isnothing(term.func)
-            func = term.func
-            df = ScalarField(phi.mesh)
-            
-            # Compute derivatives per cell
-            for i in eachindex(vals)
-                if ad_backend == :forwarddiff
-                    df.values[i] = ForwardDiff.derivative(func, vals[i])
-                else
-                    df.values[i] = Enzyme.autodiff(Enzyme.Reverse, func, Enzyme.Active, Enzyme.Active(vals[i]))[1][1]
-                end
-            end
-            
-            # Linearized term: Operator{flux * f'(phi0), phi, sign, type, nothing}
-            # Operators (Divergence, Laplacian) in XCALibre kernels expect face-based fluxes.
-            df_f = FaceScalarField(phi.mesh)
-            mesh = phi.mesh
-            for fID in eachindex(df_f.values)
-                face = mesh.faces[fID]
-                c1 = face.ownerCells[1]
-                if length(face.ownerCells) > 1
-                    c2 = face.ownerCells[2]
-                    # Simple linear interpolation
-                    df_f.values[fID] = 0.5 * (df.values[c1] + df.values[c2])
-                else
-                    # Boundary face
-                    df_f.values[fID] = df.values[c1]
-                end
-            end
-
-            linearized_flux = FaceScalarField(phi.mesh)
-            
-            # Extract underlying values from term.flux (could be Constant, ScalarField or FaceScalarField)
-            if typeof(term.flux) <: FaceScalarField
-                linearized_flux.values .= term.flux.values .* df_f.values
-            elseif typeof(term.flux) <: ScalarField
-                # Need to interpolate original flux to faces too if it is not already
-                # but usually Laplacian flux is face-based? No,nueff is FaceScalarField.
-                # If it's a ScalarField, we interpolate.
-                for fID in eachindex(linearized_flux.values)
-                    face = mesh.faces[fID]
-                    c1 = face.ownerCells[1]
-                    if length(face.ownerCells) > 1
-                        c2 = face.ownerCells[2]
-                        linearized_flux.values[fID] = 0.5 * (term.flux.values[c1] + term.flux.values[c2]) * df_f.values[fID]
-                    else
-                        linearized_flux.values[fID] = term.flux.values[c1] * df_f.values[fID]
-                    end
-                end
-            else # ConstantScalar
-                linearized_flux.values .= term.flux.values .* df_f.values
-            end
-            
-            return Operator(linearized_flux, phi, term.sign, term.type, nothing)
-        else
-            return term
-        end
-    end
-    
-    new_sources = (model.sources..., Source(extra_src))
-    return Model{typeof(model).parameters[1], typeof(model).parameters[2]}(new_terms, new_sources)
-end
-
-function linearize_bcs(BCs, model_eqn::ModelEquation)
-    phi = get_phi(model_eqn)
-    new_bcs_dict = Dict{Symbol, Any}()
-    for field_name in propertynames(BCs)
-        field_bcs = getproperty(BCs, field_name)
-        # Try to find the field in the model_eqn or related
-        # If it's a scalar equation, we just update its BCs
-        new_bcs_dict[field_name] = Discretise.update_nonlinear_robin(field_bcs, phi)
-    end
-    return NamedTuple(new_bcs_dict)
 end
 
 @kernel function _setReference!(nzval, colval, rowptr, b, pRef, cellID)

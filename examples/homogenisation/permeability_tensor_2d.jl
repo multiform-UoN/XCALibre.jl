@@ -90,14 +90,8 @@ function solve_stokes_direction(model, config, J_macro; pref=0.0)
         end
     end
     
-    # Calculate volume average velocity
-    vols = [cell.volume for cell in mesh.cells]
-    vol_tot = sum(vols)
-    Ux_avg = sum(Array(U.x.values) .* vols) / vol_tot
-    Uy_avg = sum(Array(U.y.values) .* vols) / vol_tot
-    Uz_avg = sum(Array(U.z.values) .* vols) / vol_tot
-    
-    return [Ux_avg, Uy_avg, Uz_avg]
+    # Calculate volume average velocity using built-in utility
+    return volume_average(U)
 end
 
 # 1. Setup

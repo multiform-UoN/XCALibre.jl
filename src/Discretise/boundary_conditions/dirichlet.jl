@@ -95,6 +95,3 @@ end
 @define_boundary Dirichlet Si begin
     0.0, 0.0
 end
-
-    0.0, 0.0
-end

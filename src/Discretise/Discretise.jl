@@ -57,9 +57,12 @@ include("boundary_conditions/rotating_wall.jl")
 include("boundary_conditions/rotating_wall_interpolation.jl")
 include("boundary_conditions/slip.jl")
 include("boundary_conditions/slip_interpolation.jl")
+
 include("boundary_conditions/robin.jl")
 include("boundary_conditions/robin_interpolation.jl")
 include("boundary_conditions/nonlinear_robin.jl")
+include("boundary_conditions/high_order.jl")
 
+include("Discretise_6_monolithic.jl")
 
 end

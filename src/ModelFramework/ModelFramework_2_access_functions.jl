@@ -32,8 +32,11 @@ ZDir() = ZDir(3)
 
 ## MODEL ACCESSORS
 
-@inline get_phi(eqn::ModelEquation{T,M,E,S,P}) where {T,M,E,S,P} = begin 
-    eqn.model.terms[1].phi
+@inline _term_phi(term::Operator) = term.phi
+@inline _term_phi(term) = term.op.phi   # NonlinearOperator and future wrappers
+
+@inline get_phi(eqn::ModelEquation{T,M,E,S,P}) where {T,M,E,S,P} = begin
+    _term_phi(eqn.model.terms[1])
 end
 
 @inline get_flux(eqn::ModelEquation{T,M,E,S,P}, ti::Integer) where {T,M,E,S,P} = begin 

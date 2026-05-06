@@ -52,7 +52,7 @@ end
     # 0.0, -flux*delta*bc.value # draft implementation to test!
 end
 
-# To-do: Add scalar variants of Wall BC in next version (currently using Neumann)
+# To-do: Add scala scalar variants of Wall BC in next version (currently using Neumann)
 
 @define_boundary Wall Divergence{Linear} VectorField begin # To-do refactor this code for reusability
     0.0, 0.0

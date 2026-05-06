@@ -45,16 +45,8 @@ When called, this functor will return two values `ap` and `an`, where `ap` is th
 """
 macro define_boundary(boundary, operator, definition)
     quote
-        @inline (bc::$boundary)(term::Operator{F,P,I,$operator,Fn}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P,I,Fn} = 
+        @inline (bc::$boundary)(term::Operator{F,P,I,$operator}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P,I} = 
         @inbounds begin
-            $definition
-        end
-    end |> esc
-end
-
-    quote
-        @inline (bc::$boundary)(
-        ) where {F,P,I,PS,Fn} = @inbounds begin
             $definition
         end
     end |> esc
@@ -62,19 +54,18 @@ end
 
 macro define_boundary(boundary, operator, FieldType, definition)
     quote
-        @inline (bc::$boundary)(term::Operator{F,P,I,$operator,Fn}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P<:$FieldType,I,Fn} = 
+        @inline (bc::$boundary)(term::Operator{F,P,I,$operator}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P<:$FieldType,I} = 
         @inbounds begin
             $definition
         end
     end |> esc
 end
 
-# Support Biharmonic by mapping it to Laplacian definitions for BCs
-macro define_boundary_highorder(boundary, definition)
+# Specific macro for Biharmonic (higher-order) to avoid ambiguity
+macro define_boundary_biharmonic(boundary, definition)
     quote
-        @inline (bc::$boundary)(
-            term::Operator{F,P,I,Biharmonic{T},Fn}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
-        ) where {F,P,I,T,Fn} = @inbounds begin
+        @inline (bc::$boundary)(term::Operator{F,P,I,Biharmonic{Linear}}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P,I} = 
+        @inbounds begin
             $definition
         end
     end |> esc

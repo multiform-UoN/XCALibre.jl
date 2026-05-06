@@ -97,4 +97,4 @@ end
 # 7. Save Results
 @info "Saving results..."
 writer = initialise_writer(VTK(), mesh_dev)
-save_output(model, writer, 1, 1.0, config) # Works now thanks to VTK fix!
+write_results(1, 1.0, mesh_dev, writer, BCs, ("C", C))

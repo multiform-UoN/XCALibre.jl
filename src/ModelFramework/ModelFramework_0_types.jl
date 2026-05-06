@@ -1,10 +1,16 @@
-export AbstractOperator, AbstractSource, AbstractEquation   
+export AbstractOperator, AbstractSource, AbstractEquation
 export Operator, Source, Src
+export Time, Laplacian, Divergence, Si, NonLinearSi
+export NonlinearOperator
+export Biharmonic
+export MonolithicSystem
 export Model, ScalarEquation, VectorEquation, ModelEquation, ScalarModel, VectorModel
 export nzval_index
-export spindex, spindex_csc, sparse_matrix_connectivity, extended_sparse_matrix_connectivity
+export spindex, spindex_csc
+export nzadd!
+export extended_sparse_matrix_connectivity
 
-# ABSTRACT TYPES 
+# ABSTRACT TYPES
 
 abstract type AbstractSource end
 abstract type AbstractOperator end
@@ -14,12 +20,11 @@ abstract type AbstractEquation end
 
 # Base Operator
 
-struct Operator{F,P,S,T,Fn} <: AbstractOperator
+struct Operator{F,P,S,T} <: AbstractOperator
     flux::F
     phi::P 
     sign::S
     type::T
-    func::Fn # Generic function for non-linear terms f(u)
 end
 Adapt.@adapt_structure Operator
 
@@ -35,11 +40,6 @@ function Adapt.adapt_structure(to, itp::Laplacian{T}) where {T}
     Laplacian{T}()
 end
 
-struct Biharmonic{T} end
-function Adapt.adapt_structure(to, itp::Biharmonic{T}) where {T}
-    Biharmonic{T}()
-end
-
 struct Divergence{T} end
 function Adapt.adapt_structure(to, itp::Divergence{T}) where {T}
     Divergence{T}()
@@ -50,6 +50,37 @@ function Adapt.adapt_structure(to, itp::Si)
     Si()
 end
 
+# constructors
+
+Time{T}(flux, phi) where T = Operator(
+    flux, phi, 1, Time{T}()
+    )
+
+Time{T}(phi) where T = Operator(
+    ConstantScalar(one(_get_int(phi.mesh))), phi, 1, Time{T}()
+    )
+
+Laplacian{T}(flux, phi) where T = Operator(
+    flux, phi, 1, Laplacian{T}()
+    )
+
+Divergence{T}(flux, phi) where T = Operator(
+    flux, phi, 1, Divergence{T}()
+    )
+
+Si(flux, phi) = Operator(
+    flux, phi, 1, Si()
+)
+
+# NONLINEAR WRAPPER (thin wrapper — does not touch core Operator type or scheme! signatures)
+
+struct NonlinearOperator{O<:Operator, Fn} <: AbstractOperator
+    op::O
+    func::Fn
+end
+Adapt.@adapt_structure NonlinearOperator
+
+# Type tag for nonlinear implicit source (linearised each outer iteration)
 struct NonLinearSi{Fun}
     func::Fun
 end
@@ -57,51 +88,16 @@ function Adapt.adapt_structure(to, itp::NonLinearSi{Fun}) where {Fun}
     NonLinearSi(itp.func)
 end
 
-    phi_source::PS
+# Higher-order operator type tag (4th-order biharmonic: Δ²ϕ)
+struct Biharmonic{T} end
+function Adapt.adapt_structure(to, itp::Biharmonic{T}) where {T}
+    Biharmonic{T}()
 end
-end
-
-# constructors
-
-Time{T}(flux, phi) where T = Operator(
-    flux, phi, 1, Time{T}(), nothing
-    )
-
-Time{T}(phi) where T = Operator(
-    ConstantScalar(one(_get_int(phi.mesh))), phi, 1, Time{T}(), nothing
-    )
-
-Laplacian{T}(flux, phi) where T = Operator(
-    flux, phi, 1, Laplacian{T}(), nothing
-    )
-
-# Non-linear Laplacian: div(flux * grad(f(phi)))
-Laplacian{T}(flux, func::Function, phi) where T = Operator(
-    flux, phi, 1, Laplacian{T}(), func
-    )
 
 Biharmonic{T}(flux, phi) where T = Operator(
-    flux, phi, 1, Biharmonic{T}(), nothing
-    )
-
-Divergence{T}(flux, phi) where T = Operator(
-    flux, phi, 1, Divergence{T}(), nothing
-    )
-
-# Non-linear Divergence: div(flux * f(phi))
-Divergence{T}(flux, func::Function, phi) where T = Operator(
-    flux, phi, 1, Divergence{T}(), func
-    )
-
-Si(flux, phi) = Operator(
-    flux, phi, 1, Si(), nothing
+    flux, phi, 1, Biharmonic{T}()
 )
 
-NonLinearSi(func::Function, phi) = Operator(
-    nothing, phi, 1, NonLinearSi(func), nothing
-)
-
-)
 
 # SOURCES
 
@@ -168,30 +164,25 @@ _extend_matrix(BC, mesh, i, j) = begin
 end
 
 # ScalarEquation(mesh::AbstractMesh) = begin
-ScalarEquation(phi::ScalarField, BCs) = begin
+ScalarEquation(phi::ScalarField, BCs; extended=false) = begin
     mesh = phi.mesh
     nCells = length(mesh.cells)
     Tf = _get_float(mesh)
     mesh_temp = adapt(CPU(), mesh) # WARNING: Temp solution 
-    i, j, v = sparse_matrix_connectivity(mesh_temp) # This needs to be a kernel
+    
+    if extended
+        i, j, v = extended_sparse_matrix_connectivity(mesh_temp)
+    else
+        i, j, v = sparse_matrix_connectivity(mesh_temp)
+    end
+    
     i, j = extend_matrix(mesh, BCs, i, j)
-    # i = [i; periodicConnectivity.i]
-    # j = [j; periodicConnectivity.j]
     v = zeros(Tf, length(j))
     backend = _get_backend(mesh)
-    # A = _convert_array!(sparse(i, j, v), backend)
     A = _build_A(backend, i, j, v, nCells)
     ScalarEquation(
         A,
-
-       _build_opA(A),
-        # KP.KrylovOperator(A), # small gain in performance
-        # A,
-
-        # _convert_array!(zeros(Tf, nCells), backend),
-        # _convert_array!(zeros(Tf, nCells), backend),
-        # _convert_array!(zeros(Tf, nCells), backend)
-
+        _build_opA(A),
         KernelAbstractions.zeros(backend, Tf, nCells),
         KernelAbstractions.zeros(backend, Tf, nCells),
         KernelAbstractions.zeros(backend, Tf, nCells)
@@ -277,51 +268,6 @@ function sparse_matrix_connectivity(mesh::AbstractMesh)
     return i, j, v
 end
 
-"""
-    extended_sparse_matrix_connectivity(mesh::AbstractMesh)
-
-Builds connectivity that includes second-degree neighbours (neighbours of neighbours).
-This is required for higher-order derivatives like Biharmonic (4th order).
-"""
-function extended_sparse_matrix_connectivity(mesh::AbstractMesh)
-    (; cells, cell_neighbours) = mesh
-    nCells = length(cells)
-    TI = _get_int(mesh)
-    TF = _get_float(mesh)
-    
-    # Store connections in a Set of Tuples to avoid duplicates
-    connections = Set{Tuple{TI, TI}}()
-    
-    for cID = 1:nCells
-        push!(connections, (TI(cID), TI(cID))) # Diagonal
-        
-        # Immediate neighbours
-        cell = cells[cID]
-        for fi ∈ cell.faces_range
-            nb1 = cell_neighbours[fi]
-            push!(connections, (TI(cID), TI(nb1)))
-            
-            # Neighbours of neighbours
-            nb1_cell = cells[nb1]
-            for f2i ∈ nb1_cell.faces_range
-                nb2 = cell_neighbours[f2i]
-                push!(connections, (TI(cID), TI(nb2)))
-            end
-        end
-    end
-    
-    # Convert Set to CSR arrays
-    i = TI[]
-    j = TI[]
-    for conn in connections
-        push!(i, conn[1])
-        push!(j, conn[2])
-    end
-    
-    v = zeros(TF, length(i))
-    return i, j, v
-end
-
 
 # Sparse CSR format
 function spindex(rowptr::AbstractArray{T}, colval, i, j) where T
@@ -362,9 +308,60 @@ Adapt.@adapt_structure VectorModel
 
 struct ModelEquation{T,M,E,S,P}
     type::T
-    model::M 
-    equation::E 
+    model::M
+    equation::E
     solver::S
     preconditioner::P
 end
 Adapt.@adapt_structure ModelEquation
+
+# Monolithic (block-coupled) system container
+struct MonolithicSystem{E<:Vector{<:ModelEquation}, F}
+    equations::E
+    phi_list::F     # phi_list[i] is the self-field for equation i
+    n_vars::Int
+    n_cells::Int
+    field_to_idx::Dict{UInt,Int}   # keyed by objectid(phi.values)
+end
+
+# Utility: atomic add into a CSR sparse matrix at position (i,j)
+@inline function nzadd!(A::SparseMatricesCSR.SparseMatrixCSR, i::Integer, j::Integer, val)
+    idx = spindex(A.rowptr, A.colval, i, j)
+    A.nzval[idx] += val
+end
+
+# Extended sparse matrix connectivity (2nd-degree neighbours)
+# Returns (i, j, v) triplets including neighbour-of-neighbour entries.
+# Used for high-order operators (e.g. Biharmonic) that require a wider stencil.
+function extended_sparse_matrix_connectivity(mesh::AbstractMesh)
+    (; cells, cell_neighbours) = mesh
+    nCells = length(cells)
+    TI = _get_int(mesh)
+    TF = _get_float(mesh)
+    # Build 2nd-degree stencil: for each cell cID, collect all cells reachable
+    # within 2 face-neighbour hops.
+    i = TI[]
+    j = TI[]
+    for cID in 1:nCells
+        # Degree-1 neighbours (direct face neighbours + self)
+        nbrs1 = Set{TI}([cID])
+        cell = cells[cID]
+        for fi in cell.faces_range
+            push!(nbrs1, cell_neighbours[fi])
+        end
+        # Degree-2 neighbours (face neighbours of degree-1 neighbours)
+        nbrs2 = copy(nbrs1)
+        for nb in nbrs1
+            cell_nb = cells[nb]
+            for fi in cell_nb.faces_range
+                push!(nbrs2, cell_neighbours[fi])
+            end
+        end
+        for nb in nbrs2
+            push!(i, cID)
+            push!(j, nb)
+        end
+    end
+    v = zeros(TF, length(i))
+    return i, j, v
+end

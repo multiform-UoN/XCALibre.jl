@@ -121,3 +121,16 @@ If you have used XCALibre.jl in your work, please cite it using the reference be
 }
 ```
   
+
+## multiform-UoN Fork Enhancements
+
+This fork adds advanced capabilities for porous media upscaling, non-linear ADR, and phase-field modelling:
+
+- **Automated Newton Linearisation:** Support for arbitrary non-linear operators and sources via `Enzyme.jl` and `ForwardDiff.jl`.
+- **Monolithic Block-Coupled Solvers:** Solve multiple coupled fields (e.g. Cahn-Hilliard, Poroelasticity) in a single sparse matrix.
+- **Higher-Order Derivatives:** Implementation of the 4th-order `Biharmonic` operator natively in the DSL.
+- **Robin Boundary Conditions:** Generalized $a\phi + b\partial_n\phi = c$ conditions.
+- **Extended Post-processing:** Tools for volume averaging, point sampling, and upscaled property calculation (e.g. permeability tensors).
+
+See `examples/` and `tutorials/` for usage.
+

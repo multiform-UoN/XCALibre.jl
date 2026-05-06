@@ -127,8 +127,18 @@ for t_step in 1:n_steps
         M_field = ScalarField(mesh_dev)
         if model_type == :viscous
             M_field.values .= (h.values.^3) ./ (3.0 * mu)
-        else # Darcy
+        # Darcy
             M_field.values .= h.values .* (1.0 / mu) # K=1
+        end
+        
+        # Interpolate M_field to faces (Laplacian flux must be face-based)
+        M_face = FaceScalarField(mesh_dev)
+        # Use simple average for now
+        for fID in eachindex(M_face.values)
+            oc = mesh_dev.faces[fID].ownerCells
+            M_face.values[fID] = length(oc) > 1 ? 
+                0.5 * (M_field.values[oc[1]] + M_field.values[oc[2]]) : 
+                M_field.values[oc[1]]
         end
         
         # The equation solves for h, but the flux depends on grad(p).
@@ -141,7 +151,7 @@ for t_step in 1:n_steps
         h_eqn = (
               Time{schemes.h.time}(h)
             + Biharmonic{schemes.h.laplacian}(ConstantScalar(gamma * mean(M_field.values)), h) # Surface tension (4th order)
-            - Laplacian{schemes.h.laplacian}(M_field, p) # Mobility part (treated as source or coupled)
+            - Laplacian{schemes.h.laplacian}(M_face, p) # Mobility part (treated as source or coupled)
             ==
             Source(ConstantScalar(0.0))
         ) → ScalarEquation(h, BCs.h)

@@ -1,26 +1,25 @@
-export MonolithicSystem, solve_monolithic!
-
+# ---------------------------------------------------------------------------
+# Outer constructor for MonolithicSystem.
+# Builds field→block-index map from the first term of each equation (self-field).
+# ---------------------------------------------------------------------------
 """
-    MonolithicSystem(equations::Vector{ModelEquation})
+    MonolithicSystem(eqns, phi_list)
 
-A container for multiple equations that will be assembled into a single 
-large sparse matrix and solved monolithically.
+Construct a monolithic block-coupled system.
+
+`phi_list[i]` must be the ScalarField that equation `i` solves for (the
+"self field" of that equation).  This cannot be inferred automatically
+because the first term of an equation may be a cross-field coupling term.
+
+# Example
+    sys = MonolithicSystem([C1_eqn, C2_eqn], [C1, C2])
 """
-struct MonolithicSystem{E<:Vector{<:ModelEquation}}
-    equations::E
-    n_vars::Int
-    n_cells::Int
-    field_to_idx::Dict{Any, Int}
-end
-
-function MonolithicSystem(eqns::Vector{<:ModelEquation})
-    phi1 = get_phi(eqns[1])
-    n_cells = length(phi1.mesh.cells)
-    
-    field_to_idx = Dict{Any, Int}()
-    for (i, eqn) in enumerate(eqns)
-        field_to_idx[get_phi(eqn)] = i
+function MonolithicSystem(eqns::Vector{<:ModelEquation}, phi_list)
+    n_cells = length(phi_list[1].mesh.cells)
+    # Key: objectid of the mutable values array — stable across immutable struct copies
+    field_to_idx = Dict{UInt, Int}()
+    for (i, phi) in enumerate(phi_list)
+        field_to_idx[objectid(phi.values)] = i
     end
-    
-    return MonolithicSystem(eqns, length(eqns), n_cells, field_to_idx)
+    MonolithicSystem(eqns, phi_list, length(eqns), n_cells, field_to_idx)
 end

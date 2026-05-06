@@ -35,10 +35,6 @@ Zerogradient(name::Symbol) = Zerogradient(name , 0)
     0.0, 0.0 # try this
 end
 
-@define_boundary_highorder Zerogradient begin
-    0.0, 0.0
-end
-
 @define_boundary Zerogradient Divergence{Linear} begin
     flux = term.flux[fID]
     ap = term.sign*(flux) 
@@ -76,8 +72,5 @@ end
 end
 
 @define_boundary Zerogradient Si begin
-    0.0, 0.0
-end
-
     0.0, 0.0
 end

@@ -1,9 +1,6 @@
 module Solve
 
 using Adapt
-using Accessors
-using ForwardDiff
-using Enzyme
 using Krylov
 using Statistics
 using SparseArrays
@@ -32,5 +29,7 @@ include("Preconditioners/Preconditioners.jl")
 include("Smoothers/Smoothers.jl")
 include("Solve_1_Krylov_solvers.jl")
 include("Solve_1_api.jl")
+include("Solve_3_nonlinear.jl")
+include("Solve_2_monolithic.jl")
 
 end

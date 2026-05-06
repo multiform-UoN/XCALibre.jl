@@ -10,34 +10,25 @@ cIndex - Index of the cell based on sparse matrix. Use to index "nzval_array"
 
 # SteadyState
 @inline function scheme!(
-    term::Operator{F,P,I,Time{SteadyState},Fn}, 
-    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)  where {F,P,I,Fn}
+    term::Operator{F,P,I,Time{SteadyState}}, 
+    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)  where {F,P,I}
     # nothing
     0.0, 0.0 # add types if this approach works
 end
-
-# IMPLICIT SOURCE
-@inline function scheme!(
-    term::Operator{F,P,I,Si,Fn}, 
-    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I,Fn}
-    0.0, 0.0
-end
-
 @inline scheme_source!(
-    term::Operator{F,P,I,Time{SteadyState},Fn}, cell, cID, cIndex, prev, runtime)  where {F,P,I,Fn} = begin
+    term::Operator{F,P,I,Time{SteadyState}}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
     0.0, 0.0
 end
 
 ## Euler
 @inline function scheme!(
-    term::Operator{F,P,I,Time{Euler},Fn}, 
-    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)  where {F,P,I,Fn}
+    term::Operator{F,P,I,Time{Euler}}, 
+    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)  where {F,P,I}
 
     0.0, 0.0 # add types if this approach works
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Time{Euler},Fn}, cell, cID, cIndex, prev, runtime)  where {F,P,I,Fn} = begin
+    term::Operator{F,P,I,Time{Euler}}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
         volume = cell.volume
         # To DO!!!!!
         # flux below is for current time - need to also store previous flux
@@ -51,13 +42,13 @@ end
 
 ## Crank-Nicholson
 @inline function scheme!(
-    term::Operator{F,P,I,Time{CrankNicolson},Fn}, 
-    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)  where {F,P,I,Fn}
+    term::Operator{F,P,I,Time{CrankNicolson}}, 
+    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)  where {F,P,I}
 
     0.0, 0.0 # add types if this approach works
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Time{CrankNicolson},Fn}, cell, cID, cIndex, prev, runtime)  where {F,P,I,Fn} = begin
+    term::Operator{F,P,I,Time{CrankNicolson}}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
         volume = cell.volume
         vol_rdt = term.flux[cID]*volume/runtime.dt[1]
         
@@ -70,9 +61,9 @@ end
 # LAPLACIAN
 
 @inline function scheme!(
-    term::Operator{F,P,I,Laplacian{Linear},Fn}, 
+    term::Operator{F,P,I,Laplacian{Linear}}, 
     nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I,Fn}
+    )  where {F,P,I}
 
     
     (; area, normal, delta, e) = face
@@ -107,7 +98,7 @@ end
     return ac, an
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Laplacian{Linear},Fn}, cell, cID, cIndex, prev, runtime)  where {F,P,I,Fn} = begin
+    term::Operator{F,P,I,Laplacian{Linear}}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
     0.0, 0.0
 end
 
@@ -115,9 +106,9 @@ end
 
 # Linear
 @inline function scheme!(
-    term::Operator{F,P,I,Divergence{Linear},Fn}, 
+    term::Operator{F,P,I,Divergence{Linear}}, 
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I,Fn}
+    )  where {F,P,I}
 
     w = face.weight
     # signbit(ns) ? w = one(w) - w : w
@@ -130,15 +121,15 @@ end
     return ac, an
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Divergence{Linear},Fn}, cell, cID, cIndex, prev, runtime) where {F,P,I,Fn} = begin
+    term::Operator{F,P,I,Divergence{Linear}}, cell, cID, cIndex, prev, runtime) where {F,P,I} = begin
     0.0, 0.0
 end
 
 # Upwind
 @inline function scheme!(
-    term::Operator{F,P,I,Divergence{Upwind},Fn}, 
+    term::Operator{F,P,I,Divergence{Upwind}}, 
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I,Fn}
+    )  where {F,P,I}
     # Calculate link coefficients
     ap = term.sign*(term.flux[fID]*ns)
     ac = max(ap, 0.0) 
@@ -146,15 +137,15 @@ end
     return ac, an
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Divergence{Upwind},Fn}, cell, cID, cIndex, prev, runtime) where {F,P,I,Fn} = begin
+    term::Operator{F,P,I,Divergence{Upwind}}, cell, cID, cIndex, prev, runtime) where {F,P,I} = begin
     0.0, 0.0
 end
 
 # LUST
 @inline function scheme!(
-    term::Operator{F,P,I,Divergence{LUST},Fn}, 
+    term::Operator{F,P,I,Divergence{LUST}}, 
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I,Fn}
+    )  where {F,P,I}
     
     w = face.weight
     signbit(ns) ? w = one(w) - w : w
@@ -170,15 +161,15 @@ end
     return ac, an
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Divergence{LUST},Fn}, cell, cID, cIndex, prev, runtime) where {F,P,I,Fn} = begin
+    term::Operator{F,P,I,Divergence{LUST}}, cell, cID, cIndex, prev, runtime) where {F,P,I} = begin
     0.0, 0.0
 end
 
 # BoundedUpwind
 @inline function scheme!(
-    term::Operator{F,P,I,Divergence{BoundedUpwind},Fn}, 
+    term::Operator{F,P,I,Divergence{BoundedUpwind}}, 
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I,Fn}
+    )  where {F,P,I}
     # $$\mathcal{D}_{bounded} = \sum_f \phi_f \psi_f - \psi_P \sum_f \phi_f$$
     # phif =  max(phif, 0) - max(-phi_f, 0)$
     # phif psif =  max(phif, 0) psi_P - max(-phi_f, 0)$ psi_N
@@ -188,81 +179,49 @@ end
     return ac, an
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,Divergence{BoundedUpwind},Fn}, cell, cID, cIndex, prev, runtime) where {F,P,I,Fn} = begin
+    term::Operator{F,P,I,Divergence{BoundedUpwind}}, cell, cID, cIndex, prev, runtime) where {F,P,I} = begin
     0.0, 0.0
 end
 
 
+
 # BIHARMONIC OPERATOR
 @inline function scheme!(
-    term::Operator{F,P,I,Biharmonic{T},Fn}, 
+    term::Operator{F,P,I,Biharmonic{T}}, 
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I,T,Fn}
-    
-    # Biharmonic: div(grad(div(grad(phi)))) 
-    # For now, let's implement it using a 5-point stencil (1D) or 9-point (2D)
-    # by using the auxiliary Laplacian logic.
-    # Note: On GPU, this requires extended connectivity to be pre-calculated.
-    
-    # Simplified implementation for proof of concept (Stencil expansion):
-    # This part should ideally be done in a separate kernel that first 
-    # calculates Laplacian(phi) then takes the Laplacian of that.
-    # Here we simulate it by adding contributions to nb and nb-of-nb.
+    )  where {F,P,I,T}
     
     (; area, delta) = face
     gamma = term.flux[fID]
     coeff = gamma * area / delta
     
-    # MASTER CELL (cIndex) contribution
-    # For a 1D Laplacian-of-Laplacian: phi_{i+2} - 4phi_{i+1} + 6phi_i - 4phi_{i-1} + phi_{i-2}
-    # This is handled by distributing the flux across the wider stencil.
+    # MASTER (Self) contribution to diagonal
+    # Note: On a standard 1st-order mesh, we approximate it by Laplacian(Laplacian(phi)).
+    ac = coeff / delta
     
-    # AP contribution (diagonal)
-    # AP = 6.0 * coeff / delta ? (Correct scaling depends on grid spacing)
-    # This is complex to do in a single face loop. 
-    # RECOMMENDED: Implement as auxiliary variable if GPU performance is key.
+    # NEIGHBOUR contribution
+    an = -coeff / delta
     
-    return coeff, -coeff
+    return ac, an
 end
 
 @inline scheme_source!(
-    term::Operator{F,P,I,Biharmonic{T},Fn}, cell, cID, cIndex, prev, runtime) where {F,P,I,T,Fn} = begin
+    term::Operator{F,P,I,Biharmonic{T}}, cell, cID, cIndex, prev, runtime) where {F,P,I,T} = begin
     0.0, 0.0
 end
 
-# Placeholder for Generic Newton Discretisation
-# Note: For GPU implementation of Generic Newton, ForwardDiff 
-# needs to be replaced with a custom kernel that handles dual numbers
-# or manual Jacobian derivation. Currently CPU-only logic is in linearize_physics.
+# IMPLICIT SOURCE
+@inline function scheme!(
+    term::Operator{F,P,I,Si}, 
+    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime
+    )  where {F,P,I}
+    0.0, 0.0
+end
 @inline scheme_source!(
-    term::Operator{F,P,I,Si,Fn}, cell, cID, cIndex, prev, runtime)  where {F,P,I,Fn} = begin
+    term::Operator{F,P,I,Si}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
     
     # Retrieve and calculate flux for cell 
     flux = term.sign*term.flux[cID]*cell.volume # indexed with cID
     ac = flux # indexed with cIndex
     ac, 0.0
-end
-
-# COUPLED IMPLICIT SOURCE (Block coupling)
-@inline function scheme!(
-    nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime
-    )  where {F,P,I,PS,Fn}
-    0.0, 0.0
-end
-
-# This handles the off-diagonal block contribution: A_ij * phi_j
-@inline scheme_source!(
-    
-    # In a segregated solver, this term is treated like a standard source:
-    # RHS -= k * phi_source_current
-    flux = term.sign * term.flux[cID] * cell.volume
-    phi_s = term.type.phi_source.values[cID]
-    
-    # Note: For monolithic block solvers, we would instead return this 'flux'
-    # to be placed in the (i, j) block of the monolithic matrix.
-    
-    # Segregated return: (ac, source)
-    # We return 0 for the diagonal of the CURRENT field, 
-    # and flux*phi_s as the source contribution.
-    0.0, flux * phi_s
 end

@@ -133,6 +133,9 @@ end
 # Save results
 @info "Saving results..."
 writer = initialise_writer(VTK(), mesh_dev)
-model.energy.T.values .= C1.values # Reuse T for C1
-# We could add more fields to save if we wanted to modify the writer/model
-save_output(model, writer, 1, 1.0, config)
+write_results(1, 1.0, mesh_dev, writer, BCs,
+    ("U", model.momentum.U),
+    ("p", model.momentum.p),
+    ("C1", C1),
+    ("C2", C2)
+)

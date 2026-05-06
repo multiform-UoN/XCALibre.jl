@@ -10,18 +10,18 @@
 ## 2. Generic Newton Linearization
 **Feasibility: Completed (Enzyme & ForwardDiff supported)**
 *   **Current State:** Implemented `NonLinearSi`, `NonLinearRobin`, and generic non-linear support for standard operators (Divergence/Laplacian).
-*   **Backends:** Support for both `:forwarddiff` and `:enzyme` backends in `linearize_physics`.
-*   **Architecture (Layered AD Strategy):** 
-    *   **Phase 1 (Done):** ForwardDiff for local constitutive laws.
-    *   **Phase 2 (Next):** Enzyme reverse-mode for GPU nonlinear residual kernels.
-    *   **Phase 3:** Transition to **Matrix-free Newton-Krylov (JFNK)** using Enzyme-generated Jacobian-Vector Products (JVPs). This bypasses expensive sparse matrix assembly on GPUs.
-*   **Swappable Backends:** Transition to a unified `AbstractADBackend` interface (inspired by `DifferentiationInterface.jl`) to separate physics kernels from AD implementation.
+*   **Architecture:** Layered AD strategy (ForwardDiff for local, Enzyme for global).
+*   **Next Step:** Full GPU differentiation kernels using Enzyme.
 
 ## 3. Higher Order FV Operators
-**Feasibility: Completed (Initial implementation)**
-*   **Current State:** Implemented `Biharmonic` (4th order) operator in the DSL.
-*   **Sparsity:** Implemented `extended_sparse_matrix_connectivity` which includes second-degree neighbours. This allows XCALibre to handle stencils wider than the standard OpenFOAM 7-point (hex) or immediate-neighbour pattern.
-*   **Optimization:** The biharmonic discretization is currently a first-order stencil approximation. Need higher-fidelity interpolation for non-orthogonal meshes.
+**Feasibility: Completed (Splitting & wide stencil supported)**
+*   **Current State:** Implemented `Biharmonic` (4th order) operator. Supports both monolithic mixed-splitting (recommended) and extended-stencil single-equation.
+*   **Sparsity:** `extended_sparse_matrix_connectivity` implemented for wide stencils.
+
+## 7. Monolithic Block-Coupled Solvers
+**Feasibility: Completed (Prototype implemented)**
+*   **Current State:** `MonolithicSystem` and `solve_monolithic!` allow solving multiple fields in a single sparse matrix.
+*   **Optimization:** Implement better block-preconditioners (Schur-complement based) for stiff problems like Cahn-Hilliard.
 
 ## 4. Gradient Transpose Operator ($\nabla u^T$)
 **Feasibility: High**

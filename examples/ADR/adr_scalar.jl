@@ -108,10 +108,8 @@ end
 # Save results
 @info "Saving results..."
 writer = initialise_writer(VTK(), mesh_dev)
-# Create a dummy model or just use fields
-# XCALibre's save_output expects a Physics model.
-# Let's add C to a new physics model for saving.
-# Or just manually write VTK if we wanted, but let's stick to XCALibre's way.
-# Actually we can just add C to model.energy.T if we want to trick it.
-model.energy.T.values .= C.values
-save_output(model, writer, 1, 1.0, config)
+write_results(1, 1.0, mesh_dev, writer, BCs,
+    ("U", model.momentum.U),
+    ("p", model.momentum.p),
+    ("C", C)
+)

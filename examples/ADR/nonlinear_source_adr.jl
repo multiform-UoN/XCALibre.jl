@@ -129,8 +129,11 @@ end
 
 @info "Non-linear Source ADR example completed!"
 
-# 7. Save Results (Verify VTK fix for Isothermal)
+# 7. Save Results
 @info "Saving Results to VTK..."
 writer = initialise_writer(VTK(), mesh_dev)
-# This would normally crash if T was missing, but our fix handles it!
-save_output(model, writer, 1, 1.0, config)
+write_results(1, 1.0, mesh_dev, writer, BCs,
+    ("U", model.momentum.U),
+    ("p", model.momentum.p),
+    ("C", C)
+)
