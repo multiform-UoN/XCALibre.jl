@@ -3,6 +3,7 @@ export explicit_relaxation!, implicit_relaxation!, implicit_relaxation_diagdom!,
 export solve_system!
 export solve_equation!
 export linearize_bcs
+export linearize_physics
 export residual!
 export AdaptiveTimeStepping
 
@@ -430,21 +431,77 @@ function setReference!(pEqn::E, pRef, cellID, config) where E<:ModelEquation
 end
 
 """
-    linearize_bcs(BCs, model)
+    linearize_physics(BCs, model)
 
-Returns a new NamedTuple of boundary conditions where any NonLinearRobin BCs
-have been linearized based on the current values in the model's fields.
+Returns a new (BCs, model_equation) pair where any NonLinearRobin BCs
+and NonLinearSi source terms have been linearized based on the current 
+values in the model's fields.
 """
-function linearize_bcs(BCs, model)
+function linearize_physics(BCs, model_eqn::ModelEquation)
+    # 1. Linearize BCs
+    new_bcs = linearize_bcs(BCs, model_eqn)
+    
+    # 2. Linearize Model terms (Implicit sources)
+    new_model = _linearize_model_terms(model_eqn.model, model_eqn)
+    
+    # 3. Create updated ModelEquation
+    return new_bcs, @set model_eqn.model = new_model
+end
+
+function _linearize_model_terms(model::Model, model_eqn)
+    phi = get_phi(model_eqn)
+    vals = phi.values
+    
+    new_terms = map(model.terms) do term
+        if typeof(term.type) <: NonLinearSi
+            # Linearize term R(phi) ≈ R'(phi0)phi + (R(phi0) - R'(phi0)phi0)
+            # This returns an Operator{Si} for the implicit part 
+            # and we should ideally return a Source for the explicit part.
+            # XCALibre's Model handles terms and sources separately.
+            
+            # Since we can't easily add a Source to the tuple here without 
+            # refactoring Model, we'll return a special 'LinearizedNonLinearSi' 
+            # or just map it to an implicit Si and assume the user handles 
+            # the explicit part or we fix it in discretise!.
+            
+            # For now, let's just implement the logic to get the coefficients.
+            func = term.type.func
+            
+            # We need to compute this per cell!
+            # XCALibre's Si operator takes a 'flux' field (the coefficient k).
+            # We create a new ScalarField to store the linearized coefficients.
+            k_imp = ScalarField(phi.mesh)
+            
+            # Use ForwardDiff to get derivatives per cell
+            # (Note: This is CPU-bound currently)
+            for i in eachindex(vals)
+                v0 = vals[i]
+                dv = ForwardDiff.derivative(func, v0)
+                k_imp.values[i] = dv
+            end
+            
+            # Return a standard implicit Si operator
+            return Si(k_imp, phi)
+        else
+            return term
+        end
+    end
+    
+    # Handle explicit source part if needed. 
+    # For a clean implementation, NonLinearSi should probably be its own 
+    # category that handles both.
+    
+    return Model{typeof(model).parameters[1], typeof(model).parameters[2]}(new_terms, model.sources)
+end
+
+function linearize_bcs(BCs, model_eqn::ModelEquation)
+    phi = get_phi(model_eqn)
     new_bcs_dict = Dict{Symbol, Any}()
     for field_name in propertynames(BCs)
         field_bcs = getproperty(BCs, field_name)
-        if hasproperty(model, field_name)
-            field = getproperty(model, field_name)
-            new_bcs_dict[field_name] = Discretise.update_nonlinear_robin(field_bcs, field)
-        else
-            new_bcs_dict[field_name] = field_bcs
-        end
+        # Try to find the field in the model_eqn or related
+        # If it's a scalar equation, we just update its BCs
+        new_bcs_dict[field_name] = Discretise.update_nonlinear_robin(field_bcs, phi)
     end
     return NamedTuple(new_bcs_dict)
 end

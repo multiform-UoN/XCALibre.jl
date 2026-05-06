@@ -1,6 +1,6 @@
 export AbstractOperator, AbstractSource, AbstractEquation   
 export Operator, Source, Src
-export Time, Laplacian, Divergence, Si
+export Time, Laplacian, Divergence, Si, NonLinearSi
 export Model, ScalarEquation, VectorEquation, ModelEquation, ScalarModel, VectorModel
 export nzval_index
 export spindex, spindex_csc
@@ -45,6 +45,13 @@ function Adapt.adapt_structure(to, itp::Si)
     Si()
 end
 
+struct NonLinearSi{Fun}
+    func::Fun
+end
+function Adapt.adapt_structure(to, itp::NonLinearSi{Fun}) where {Fun}
+    NonLinearSi(itp.func)
+end
+
 # constructors
 
 Time{T}(flux, phi) where T = Operator(
@@ -65,6 +72,10 @@ Divergence{T}(flux, phi) where T = Operator(
 
 Si(flux, phi) = Operator(
     flux, phi, 1, Si()
+)
+
+NonLinearSi(func::Function, phi) = Operator(
+    nothing, phi, 1, NonLinearSi(func)
 )
 
 # SOURCES

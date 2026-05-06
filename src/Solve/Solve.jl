@@ -1,6 +1,8 @@
 module Solve
 
 using Adapt
+using Accessors
+using ForwardDiff
 using Krylov
 using Statistics
 using SparseArrays
