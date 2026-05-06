@@ -45,7 +45,7 @@ When called, this functor will return two values `ap` and `an`, where `ap` is th
 """
 macro define_boundary(boundary, operator, definition)
     quote
-        @inline (bc::$boundary)(term::Operator{F,P,I,$operator}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P,I} = 
+        @inline (bc::$boundary)(term::Operator{F,P,I,$operator,Fn}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P,I,Fn} = 
         @inbounds begin
             $definition
         end
@@ -54,8 +54,19 @@ end
 
 macro define_boundary(boundary, operator, FieldType, definition)
     quote
-        @inline (bc::$boundary)(term::Operator{F,P,I,$operator}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P<:$FieldType,I} = 
+        @inline (bc::$boundary)(term::Operator{F,P,I,$operator,Fn}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P<:$FieldType,I,Fn} = 
         @inbounds begin
+            $definition
+        end
+    end |> esc
+end
+
+# Support Biharmonic by mapping it to Laplacian definitions for BCs
+macro define_boundary_highorder(boundary, definition)
+    quote
+        @inline (bc::$boundary)(
+            term::Operator{F,P,I,Biharmonic{T},Fn}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+        ) where {F,P,I,T,Fn} = @inbounds begin
             $definition
         end
     end |> esc

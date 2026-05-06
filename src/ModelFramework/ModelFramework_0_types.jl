@@ -1,9 +1,9 @@
 export AbstractOperator, AbstractSource, AbstractEquation   
 export Operator, Source, Src
-export Time, Laplacian, Divergence, Si, NonLinearSi
+export Time, Laplacian, Divergence, Si, NonLinearSi, Biharmonic
 export Model, ScalarEquation, VectorEquation, ModelEquation, ScalarModel, VectorModel
 export nzval_index
-export spindex, spindex_csc
+export spindex, spindex_csc, sparse_matrix_connectivity, extended_sparse_matrix_connectivity
 
 # ABSTRACT TYPES 
 
@@ -15,11 +15,12 @@ abstract type AbstractEquation end
 
 # Base Operator
 
-struct Operator{F,P,S,T} <: AbstractOperator
+struct Operator{F,P,S,T,Fn} <: AbstractOperator
     flux::F
     phi::P 
     sign::S
     type::T
+    func::Fn # Generic function for non-linear terms f(u)
 end
 Adapt.@adapt_structure Operator
 
@@ -33,6 +34,11 @@ end
 struct Laplacian{T} end
 function Adapt.adapt_structure(to, itp::Laplacian{T}) where {T}
     Laplacian{T}()
+end
+
+struct Biharmonic{T} end
+function Adapt.adapt_structure(to, itp::Biharmonic{T}) where {T}
+    Biharmonic{T}()
 end
 
 struct Divergence{T} end
@@ -55,27 +61,41 @@ end
 # constructors
 
 Time{T}(flux, phi) where T = Operator(
-    flux, phi, 1, Time{T}()
+    flux, phi, 1, Time{T}(), nothing
     )
 
 Time{T}(phi) where T = Operator(
-    ConstantScalar(one(_get_int(phi.mesh))), phi, 1, Time{T}()
+    ConstantScalar(one(_get_int(phi.mesh))), phi, 1, Time{T}(), nothing
     )
 
 Laplacian{T}(flux, phi) where T = Operator(
-    flux, phi, 1, Laplacian{T}()
+    flux, phi, 1, Laplacian{T}(), nothing
+    )
+
+# Non-linear Laplacian: div(flux * grad(f(phi)))
+Laplacian{T}(flux, func::Function, phi) where T = Operator(
+    flux, phi, 1, Laplacian{T}(), func
+    )
+
+Biharmonic{T}(flux, phi) where T = Operator(
+    flux, phi, 1, Biharmonic{T}(), nothing
     )
 
 Divergence{T}(flux, phi) where T = Operator(
-    flux, phi, 1, Divergence{T}()
+    flux, phi, 1, Divergence{T}(), nothing
+    )
+
+# Non-linear Divergence: div(flux * f(phi))
+Divergence{T}(flux, func::Function, phi) where T = Operator(
+    flux, phi, 1, Divergence{T}(), func
     )
 
 Si(flux, phi) = Operator(
-    flux, phi, 1, Si()
+    flux, phi, 1, Si(), nothing
 )
 
 NonLinearSi(func::Function, phi) = Operator(
-    nothing, phi, 1, NonLinearSi(func)
+    nothing, phi, 1, NonLinearSi(func), nothing
 )
 
 # SOURCES
@@ -248,6 +268,51 @@ function sparse_matrix_connectivity(mesh::AbstractMesh)
             push!(j, neighbour) # neighbour index (column)
         end
     end
+    v = zeros(TF, length(i))
+    return i, j, v
+end
+
+"""
+    extended_sparse_matrix_connectivity(mesh::AbstractMesh)
+
+Builds connectivity that includes second-degree neighbours (neighbours of neighbours).
+This is required for higher-order derivatives like Biharmonic (4th order).
+"""
+function extended_sparse_matrix_connectivity(mesh::AbstractMesh)
+    (; cells, cell_neighbours) = mesh
+    nCells = length(cells)
+    TI = _get_int(mesh)
+    TF = _get_float(mesh)
+    
+    # Store connections in a Set of Tuples to avoid duplicates
+    connections = Set{Tuple{TI, TI}}()
+    
+    for cID = 1:nCells
+        push!(connections, (TI(cID), TI(cID))) # Diagonal
+        
+        # Immediate neighbours
+        cell = cells[cID]
+        for fi ∈ cell.faces_range
+            nb1 = cell_neighbours[fi]
+            push!(connections, (TI(cID), TI(nb1)))
+            
+            # Neighbours of neighbours
+            nb1_cell = cells[nb1]
+            for f2i ∈ nb1_cell.faces_range
+                nb2 = cell_neighbours[f2i]
+                push!(connections, (TI(cID), TI(nb2)))
+            end
+        end
+    end
+    
+    # Convert Set to CSR arrays
+    i = TI[]
+    j = TI[]
+    for conn in connections
+        push!(i, conn[1])
+        push!(j, conn[2])
+    end
+    
     v = zeros(TF, length(i))
     return i, j, v
 end

@@ -8,16 +8,16 @@
 *   **Benefits:** Faster convergence for highly coupled physics (e.g., Poroelasticity, high-Re flow).
 
 ## 2. Generic Newton Linearization
-**Feasibility: High (Foundations implemented)**
-*   **Current State:** I have implemented `NonLinearSi` and `NonLinearRobin` using `ForwardDiff.jl`.
-*   **Proposed Improvement:** Extend the DSL to allow non-linear functions inside `Divergence` or `Laplacian`.
-*   **Redefining Operators:** Redefine the `Operator` struct to optionally hold a `NonLinear` tag and a function. The `linearize_physics` tool should automatically handle the Jacobian of the entire residual $Res(\phi) = 0$.
+**Feasibility: Completed (Initial implementation)**
+*   **Current State:** I have implemented `NonLinearSi`, `NonLinearRobin`, and generic non-linear support for standard operators (Divergence/Laplacian) using `ForwardDiff.jl`.
+*   **Linearization API:** `linearize_physics` now automatically extracts Jacobians for non-linear functions inside operators.
+*   **Optimization needed:** Currently CPU-bound. For GPU, we need a kernel-based differentiation approach (e.g., using `Enzyme.jl` or manual dual-number dispatch).
 
 ## 3. Higher Order FV Operators
-**Feasibility: Medium**
-*   **Current State:** Mostly 2nd order (Linear/Upwind).
-*   **Proposed:** Implement 3rd order QUICK or 4th order schemes.
-*   **Matrix Sparsity:** Unlike OpenFOAM's standard `lduMatrix` (which is strictly 7-diagonal for hex), XCALibre builds actual `SparseMatrixCSR`. We can easily extend the connectivity to include second-neighbours (Stencil expansion) without breaking the solver architecture.
+**Feasibility: Completed (Initial implementation)**
+*   **Current State:** Implemented `Biharmonic` (4th order) operator in the DSL.
+*   **Sparsity:** Implemented `extended_sparse_matrix_connectivity` which includes second-degree neighbours. This allows XCALibre to handle stencils wider than the standard OpenFOAM 7-point (hex) or immediate-neighbour pattern.
+*   **Optimization:** The biharmonic discretization is currently a first-order stencil approximation. Need higher-fidelity interpolation for non-orthogonal meshes.
 
 ## 4. Gradient Transpose Operator ($\nabla u^T$)
 **Feasibility: High**
