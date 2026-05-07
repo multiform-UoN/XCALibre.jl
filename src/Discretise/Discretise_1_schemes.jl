@@ -6,6 +6,33 @@ cID - Index of the cell outer loop. Use to index "b"
 cIndex - Index of the cell based on sparse matrix. Use to index "nzval_array"
 =#
 
+@inline function scheme_contribution!(
+    term::Operator,
+    nzval_array, cell, face, cellN, ns, cID, nID, cIndex, nIndex, fID, prev, runtime
+)
+    ac, an = scheme!(term, nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime)
+    return ac, an, zero(ac + an)
+end
+
+@inline function scheme_contribution!(
+    term::AffineOperator,
+    nzval_array, cell, face, cellN, ns, cID, nID, cIndex, nIndex, fID, prev, runtime
+)
+    ac, an = scheme!(term.op, nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime)
+    jac_c = term.jacobian[cID]
+    jac_n = term.jacobian[nID]
+    off_c = term.offset[cID]
+    off_n = term.offset[nID]
+    return ac * jac_c, an * jac_n, -(ac * off_c + an * off_n)
+end
+
+@inline function scheme_source!(
+    term::AffineOperator, cell, cID, cIndex, prev, runtime
+)
+    ac, b = scheme_source!(term.op, cell, cID, cIndex, term.reference, runtime)
+    return ac * term.jacobian[cID], b - ac * term.offset[cID]
+end
+
 # TIME 
 
 # SteadyState

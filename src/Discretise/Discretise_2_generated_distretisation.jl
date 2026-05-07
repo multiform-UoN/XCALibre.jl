@@ -6,7 +6,7 @@ function discretise!(
     (; backend, workgroup) = hardware
 
     # Retrieve variabels for defition
-    mesh = eqn.model.terms[1].phi.mesh
+    mesh = get_phi(eqn).mesh
     model = eqn.model
 
     # Sparse array and b accessor call
@@ -66,7 +66,7 @@ end
 
 
             # Call scheme generated fucntion
-            ac, an = _scheme!(model, terms, nzval0, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)
+            ac, an, _ = _scheme!(model, terms, nzval0, cell, face,  cellN, ns, i, nID, cIndex, nIndex, fID, prev, runtime)
             ac_sum += ac
             nzval0[nIndex] = an
 
@@ -93,7 +93,7 @@ function discretise!(
     (; backend, workgroup) = hardware
 
     # Retrieve variabels for defition
-    mesh = eqn.model.terms[1].phi.mesh
+    mesh = get_phi(eqn).mesh
     model = eqn.model
 
     # Sparse array and b accessor call
@@ -136,6 +136,7 @@ end
 
         # Set index for sparse array values on diagonal!
         cIndex = spindex(rowptr, colval, i, i)
+        b[i] = zero(F)
 
         # For loop over workitem cell faces
         ac_sum = zero(F)
@@ -151,9 +152,10 @@ end
             nIndex = spindex(rowptr, colval, i, nID)
 
             # Call scheme generated fucntion
-            ac, an = _scheme!(model, terms, nzval, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)
+            ac, an, bface = _scheme!(model, terms, nzval, cell, face,  cellN, ns, i, nID, cIndex, nIndex, fID, prev, runtime)
             ac_sum += ac
             nzval[nIndex] = an
+            b[i] += bface
         end
         
         # Call scheme source generated function
@@ -162,7 +164,7 @@ end
 
         # Call sources generated function
         b2 = _sources!(model, sources, volume, i)
-        b[i] = b2 + b1
+        b[i] += b2 + b1
     end
 end
 
@@ -170,16 +172,17 @@ return_quote(x, t) = :(nothing)
 
 # Scheme generated function definition
 # @generated function _scheme!(model::Model{TN,SN,T,S}, terms, nzval, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime) where {TN,SN,T,S}
-@generated function _scheme!(model::Model{TN,SN,T,S}, terms::TERMS, nzval, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime) where {TN,SN,T,S,TERMS}
+@generated function _scheme!(model::Model{TN,SN,T,S}, terms::TERMS, nzval, cell, face,  cellN, ns, cID, nID, cIndex, nIndex, fID, prev, runtime) where {TN,SN,T,S,TERMS}
     # Allocate expression array to store scheme function
     out = Expr(:block)
 
     # Loop over number of terms and store scheme function in array
     for t in 1:TN
         function_call_scheme = quote
-            ac, an = scheme!(terms[$t], nzval, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime)
+            ac, an, b = scheme_contribution!(terms[$t], nzval, cell, face,  cellN, ns, cID, nID, cIndex, nIndex, fID, prev, runtime)
             AC += ac
             AN += an
+            B += b
         end
         push!(out.args, function_call_scheme)
     end
@@ -187,8 +190,9 @@ return_quote(x, t) = :(nothing)
     quote
         AC = 0.0
         AN = 0.0
+        B = 0.0
         $(out.args...)
-        return AC, AN
+        return AC, AN, B
     end
 end
 

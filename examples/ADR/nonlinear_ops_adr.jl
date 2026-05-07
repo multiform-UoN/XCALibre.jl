@@ -53,7 +53,7 @@ flux!(mdotf, model.momentum.Uf, config)
 gamma = ConstantScalar(1e-4)
 
 # 6. Non-linear ADR Equation Definition
-C_eqn = (
+C_eqn_template = (
       Divergence{schemes.C.divergence}(mdotf, f_advect, C) # div(U * C^2)
     - Laplacian{schemes.C.laplacian}(gamma, g_diffuse, C)  # div(G * grad(C^1.5))
     ==
@@ -61,8 +61,8 @@ C_eqn = (
 ) → ScalarEquation(C, BCs.C)
 
 # Initialise solver
-@reset C_eqn.preconditioner = set_preconditioner(solvers.C.preconditioner, C_eqn)
-@reset C_eqn.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C_eqn))
+@reset C_eqn_template.preconditioner = set_preconditioner(solvers.C.preconditioner, C_eqn_template)
+@reset C_eqn_template.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C_eqn_template))
 
 @info "Solving Non-Linear Operators ADR..."
 # ad_backend = :enzyme
@@ -70,13 +70,13 @@ ad_backend = :forwarddiff
 
 total_time = 0.0
 for i in 1:20
-    global C_eqn, total_time
+    global total_time
     
     # Timing start
     iter_start = time_ns()
     
     # 6.1 Newton Linearization
-    updated_bcs, C_eqn = linearize_physics(BCs, C_eqn; ad_backend=ad_backend)
+    updated_bcs, C_eqn = linearize_physics(BCs, C_eqn_template; ad_backend=ad_backend)
     
     # 6.2 Linear Solve
     res = solve_equation!(C_eqn, C, updated_bcs.C, solvers.C, config)

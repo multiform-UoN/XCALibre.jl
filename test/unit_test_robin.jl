@@ -91,8 +91,10 @@ apply_boundary_conditions!(T_eqn_dirichlet, config_dirichlet.boundaries.T, nothi
 # Unit mesh is 1x1. 3x3 cells. Cell width = 1/3. 
 # Distance from center to face = 1/6.
 # denom = 1/6 + 1 = 7/6.
-# AP = - (1 * area * 1) / (7/6) = - 6/7 * area.
-# BP = - (1 * area * 100) / (7/6) = - 600/7 * area.
+# For -Laplacian, the interior diagonal is positive and the Robin diagonal
+# contribution follows the same sign convention as Dirichlet.
+# AP = (1 * area * 1) / (7/6) = 6/7 * area.
+# BP = (1 * area * 100) / (7/6) = 600/7 * area.
 
 BCs_mixed = assign(
     region = mesh_dev,
@@ -122,10 +124,10 @@ apply_boundary_conditions!(T_eqn_mixed, config_mixed.boundaries.T, nothing, 0.0,
 # A[1,1] should have contribution from Robin
 area = 1/3 # face area for unit mesh
 delta = 1/6
-expected_AP = - (1.0 * area * 1.0) / (1.0 * delta + 1.0)
+expected_AP = (1.0 * area * 1.0) / (1.0 * delta + 1.0)
 # A[1,1] also has contributions from internal faces (right, top) and other boundary faces (bottom)
-# Internal face: -Gamma*area/delta = -1*(1/3)/(1/3) = -1. (Wait, delta is distance between centers = 1/3)
+# Internal face: Gamma*area/delta = 1*(1/3)/(1/3) = 1.
 # Bottom face is Zerogradient: contribution 0.
-# So A[1,1] = -1 (right) - 1 (top) + expected_AP
-expected_A11 = -1.0 - 1.0 + expected_AP
+# So A[1,1] = 1 (right) + 1 (top) + expected_AP
+expected_A11 = 1.0 + 1.0 + expected_AP
 @test T_eqn_mixed.equation.A.parent[1,1] ≈ expected_A11

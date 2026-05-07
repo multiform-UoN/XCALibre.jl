@@ -6,8 +6,8 @@ export monolithic_discretise!, monolithic_apply_bcs!
 # Assembles interior-face contributions of a MonolithicSystem into a block-CSR
 # matrix.  Boundary conditions are applied separately via monolithic_apply_bcs!.
 #
-# Design: each Operator carries term.phi (the field it acts on).  The column
-# block is determined by field_to_idx[term.phi].  Cross-field terms (e.g.
+# Design: each operator term carries the field it acts on.  The column
+# block is determined by that field.  Cross-field terms (e.g.
 # Laplacian(a12, C2) inside equation C1) are automatically routed to the
 # off-diagonal block (i,j) — no special CoupledSi operator is needed.
 #
@@ -34,7 +34,7 @@ function monolithic_discretise!(
         for term in model_eqn.model.terms
             # Route to the correct column block via the operator's own phi.
             # Uses objectid(phi.values) as a stable mutable-array-based key.
-            phi_j = term.phi   # for Operator; use linearize_physics first for NonlinearOperator
+            phi_j = _term_phi(term)
             j = field_to_idx[objectid(phi_j.values)]
             col_off = (j - 1) * n_cells
             # prev for this term = the field's current values (for time/explicit schemes)
@@ -58,9 +58,10 @@ function monolithic_discretise!(
                     nIndex_mono = spindex(A_mono.rowptr, A_mono.colval, row, col_nb)
                     @assert nIndex_mono > 0 "Neighbour entry not found in monolithic matrix at row $row, col $col_nb"
 
-                    ac, an = scheme!(term, A_mono.nzval, cell, face, cellN, ns,
-                                     cIndex_mono, nIndex_mono, fID, prev, runtime)
+                    ac, an, b_face = scheme_contribution!(term, A_mono.nzval, cell, face, cellN, ns,
+                                                           cID, nID, cIndex_mono, nIndex_mono, fID, prev, runtime)
                     ac_sum += ac
+                    b_mono[row] += b_face
                     # Use += so that two terms targeting the same block accumulate
                     A_mono.nzval[nIndex_mono] += an
                 end
@@ -112,7 +113,7 @@ function monolithic_apply_bcs!(
         row_off = (i - 1) * n_cells
 
         for term in model_eqn.model.terms
-            phi_j = term.phi
+            phi_j = _term_phi(term)
             j = field_to_idx[objectid(phi_j.values)]
             col_off = (j - 1) * n_cells
             BCs_j = bcs_list[j]

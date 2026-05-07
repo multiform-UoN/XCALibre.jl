@@ -29,8 +29,8 @@ end
     (; a, b, value) = bc.value
     denom = a*delta + b
     coeff = J*area/denom
-    ap = term.sign[1]*(-coeff*a)
-    bp = term.sign[1]*(-coeff*value)
+    ap = term.sign*(-coeff*a)
+    bp = term.sign*(-coeff*value)
     ap, bp
 end
 

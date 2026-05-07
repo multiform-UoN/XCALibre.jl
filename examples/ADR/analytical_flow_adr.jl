@@ -65,7 +65,7 @@ flux!(mdotf, model.momentum.Uf, config)
 gamma = ConstantScalar(1e-4)
 
 # 6. Solve Non-linear ADR Loop
-C_eqn = (
+C_eqn_template = (
       Divergence{schemes.C.divergence}(mdotf, C)
     - Laplacian{schemes.C.laplacian}(gamma, C)
     + NonLinearSi(reaction_func, C)
@@ -74,14 +74,13 @@ C_eqn = (
 ) → ScalarEquation(C, BCs.C)
 
 # Initialise solver
-@reset C_eqn.preconditioner = set_preconditioner(solvers.C.preconditioner, C_eqn)
-@reset C_eqn.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C_eqn))
+@reset C_eqn_template.preconditioner = set_preconditioner(solvers.C.preconditioner, C_eqn_template)
+@reset C_eqn_template.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C_eqn_template))
 
 @info "Solving Non-Linear ADR with analytical flow..."
 for i in 1:50
-    global C_eqn
     # Automated Newton Linearization
-    updated_bcs, C_eqn = linearize_physics(BCs, C_eqn; susp=true)
+    updated_bcs, C_eqn = linearize_physics(BCs, C_eqn_template; susp=true)
     
     res = solve_equation!(C_eqn, C, updated_bcs.C, solvers.C, config)
     

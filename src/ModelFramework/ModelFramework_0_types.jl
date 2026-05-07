@@ -1,7 +1,7 @@
 export AbstractOperator, AbstractSource, AbstractEquation
 export Operator, Source, Src
 export Time, Laplacian, Divergence, Si, NonLinearSi
-export NonlinearOperator
+export NonlinearMap, NonlinearOperator, AffineOperator
 export Biharmonic
 export MonolithicSystem
 export Model, ScalarEquation, VectorEquation, ModelEquation, ScalarModel, VectorModel
@@ -72,13 +72,34 @@ Si(flux, phi) = Operator(
     flux, phi, 1, Si()
 )
 
-# NONLINEAR WRAPPER (thin wrapper — does not touch core Operator type or scheme! signatures)
+# NONLINEAR WRAPPERS
+
+struct NonlinearMap{Fun,Deriv}
+    func::Fun
+    derivative::Deriv
+end
+Adapt.@adapt_structure NonlinearMap
+
+NonlinearMap(func::Function) = NonlinearMap{typeof(func),Nothing}(func, nothing)
+NonlinearMap(func::Function, derivative::Function) =
+    NonlinearMap{typeof(func),typeof(derivative)}(func, derivative)
+
+@inline (map::NonlinearMap)(x) = map.func(x)
 
 struct NonlinearOperator{O<:Operator, Fn} <: AbstractOperator
     op::O
-    func::Fn
+    map::Fn
 end
 Adapt.@adapt_structure NonlinearOperator
+
+struct AffineOperator{O<:Operator, J, C, R, Fn} <: AbstractOperator
+    op::O
+    jacobian::J
+    offset::C
+    reference::R
+    map::Fn
+end
+Adapt.@adapt_structure AffineOperator
 
 # Type tag for nonlinear implicit source (linearised each outer iteration)
 struct NonLinearSi{Fun}

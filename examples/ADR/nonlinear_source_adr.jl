@@ -85,7 +85,7 @@ gamma = ConstantScalar(1e-4)
 
 # Build Equation using the new NonLinearSi operator
 # This stores the function and is linearized inside the loop.
-C_eqn = (
+C_eqn_template = (
       Divergence{schemes.C.divergence}(mdotf, C)
     - Laplacian{schemes.C.laplacian}(gamma, C)
     + NonLinearSi(reaction_func, C)  # <--- NEW OPERATOR
@@ -94,8 +94,8 @@ C_eqn = (
 ) → ScalarEquation(C, BCs.C)
 
 # Initialise solver
-@reset C_eqn.preconditioner = set_preconditioner(solvers.C.preconditioner, C_eqn)
-@reset C_eqn.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C_eqn))
+@reset C_eqn_template.preconditioner = set_preconditioner(solvers.C.preconditioner, C_eqn_template)
+@reset C_eqn_template.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C_eqn_template))
 
 @info "Solving Non-Linear Implicit Source ADR..."
 # Choose AD backend: :forwarddiff or :enzyme
@@ -103,11 +103,11 @@ ad_backend = :enzyme
 
 total_time = 0.0
 for i in 1:100
-    global C_eqn, total_time
+    global total_time
     # 6.1 AUTOMATIC LINEARIZATION
     iter_start = time_ns()
 
-    updated_bcs, C_eqn = linearize_physics(BCs, C_eqn; susp=true, ad_backend=ad_backend)
+    updated_bcs, C_eqn = linearize_physics(BCs, C_eqn_template; susp=true, ad_backend=ad_backend)
 
     # 6.2 Solve
     res = solve_equation!(C_eqn, C, updated_bcs.C, solvers.C, config)

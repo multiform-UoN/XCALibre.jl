@@ -28,6 +28,10 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("unit_test_laplace.jl")
     end
 
+    @testset "Nonlinear operator Unit Test" begin
+        include("unit_test_nonlinear_operators.jl")
+    end
+
     @testset "setFields Function Unit Test" begin
         include("unit_test_setFields.jl")
     end
