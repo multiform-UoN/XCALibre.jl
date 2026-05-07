@@ -34,9 +34,9 @@ mesh_dev = adapt(backend, mesh)
 n_cells = length(mesh_dev.cells)
 
 # 2. Phase-field parameters
-kappa  = 1e-2  # interface thickness (increased for stability)
-M_mob  = 1e-4  # mobility
-dt     = 1e-5  # time step (reduced for stability)
+kappa  = 1e-2  # interface thickness parameter
+M_mob  = 1e-1  # mobility (larger value for visible dynamics in this demo)
+dt     = 1e-2  # time step
 
 # 3. BCs: no-flux for ϕ and μ
 BCs = assign(
@@ -54,7 +54,7 @@ schemes = (
 solvers = (
     phi = SolverSetup(solver=Bicgstab(), preconditioner=Jacobi(), convergence=1e-8, relax=1.0),
 )
-runtime  = Runtime(iterations=10, write_interval=-1, time_step=dt)
+runtime  = Runtime(iterations=1, write_interval=-1, time_step=dt)
 config   = Configuration(solvers=solvers, schemes=schemes, runtime=runtime,
                          hardware=hardware, boundaries=BCs)
 
@@ -63,7 +63,6 @@ phi    = ScalarField(mesh_dev)
 mu     = ScalarField(mesh_dev)
 phi_n  = ScalarField(mesh_dev)      # previous time step
 fp_src = ScalarField(mesh_dev)      # f'(ϕ^n) source for μ equation
-phi_div= ScalarField(mesh_dev)      # ϕ^n/Δt source for ϕ equation
 
 # Initialise ϕ: tanh interface in x-direction
 for cID in 1:n_cells
@@ -81,24 +80,20 @@ write_every = 5
 
 @info "Running monolithic Cahn-Hilliard for $n_steps steps..."
 for step in 1:n_steps
-    global phi, mu, phi_n, fp_src, phi_div
+    global phi, mu, phi_n, fp_src
 
     # Cache previous ϕ^n
     phi_n.values .= phi.values
 
-    # Compute explicit sources:
-    # f'(ϕ^n) = ϕ^n³ - ϕ^n  (used in the μ equation RHS)
+    # Compute explicit source for μ equation:
+    # f'(ϕ^n) = ϕ^n³ - ϕ^n  (linearised double-well derivative)
     fp_src.values .= phi_n.values.^3 .- phi_n.values
-
-    # ϕ^n/Δt  (used in the ϕ equation RHS)
-    phi_div.values .= phi_n.values ./ dt
 
     # Build block-coupled system:
     #
     # Eq 1 (ϕ row):  ϕ/Δt - M∇²μ = ϕ^n/Δt
-    #   - Time{Euler}(phi)       → adds ϕ/Δt to diagonal (block 1,1)
-    #   - Laplacian{Linear}(M, mu) → adds -M∇²μ to block (1,2) off-diagonal
-    #   - Source(phi_div)         → ϕ^n/Δt on RHS
+    #   - Time{Euler}(phi)             → adds ϕ/Δt to diagonal AND ϕ^n/Δt to RHS
+    #   - Laplacian{Linear}(M, mu)     → adds -M∇²μ to block (1,2) off-diagonal
     #
     # Eq 2 (μ row):  -κ∇²ϕ + μ = f'(ϕ^n)
     #   - Laplacian{Linear}(kappa, phi) → -κ∇²ϕ in block (2,1) off-diagonal
@@ -112,7 +107,7 @@ for step in 1:n_steps
           Time{schemes.phi.time}(phi)
         - Laplacian{schemes.phi.laplacian}(M_coeff, mu)   # cross-field: couples to μ
         ==
-        Source(phi_div)
+        Source(ConstantScalar(0.0))
     ) → ScalarEquation(phi, BCs.phi)
 
     mu_eqn = (

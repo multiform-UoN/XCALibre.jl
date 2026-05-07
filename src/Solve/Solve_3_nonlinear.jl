@@ -12,6 +12,10 @@ ModelFramework.Laplacian{T}(flux, func::Function, phi) where T =
 ModelFramework.Divergence{T}(flux, func::Function, phi) where T =
     NonlinearOperator(Operator(flux, phi, 1, Divergence{T}()), func)
 
+# Two-argument constructor: NonLinearSi(func, phi) → Operator with NonLinearSi type tag
+ModelFramework.NonLinearSi(func::Function, phi) =
+    Operator(nothing, phi, 1, NonLinearSi(func))
+
 # ---------------------------------------------------------------------------
 # linearize_bcs: replace NonLinearRobin BCs with their Newton-linearised Robin
 # ---------------------------------------------------------------------------
@@ -44,8 +48,55 @@ function linearize_physics(BCs, model_eqn::ModelEquation; susp=true, ad_backend=
     extra_sources = []
     
     new_terms = map(model_eqn.model.terms) do term
-        # Case A: Standard Non-linear Implicit Source (NonLinearSi)
-        if typeof(term.type) <: NonLinearSi
+        # Case A: Non-linear Differential Operators (Wrapped in NonlinearOperator)
+        # Must check this BEFORE NonLinearSi since NonlinearOperator has no .type field
+        if term isa NonlinearOperator
+            func = term.func
+            inner_op = term.op
+
+            # Compute df/dphi at each cell
+            df = ScalarField(mesh)
+            s_exp_raw = ScalarField(mesh)
+            for i in eachindex(vals)
+                v0 = vals[i]
+                if ad_backend === :forwarddiff
+                    df.values[i] = ForwardDiff.derivative(func, v0)
+                    r0 = func(v0)
+                else # :enzyme
+                    r0 = func(v0)
+                    df.values[i] = Enzyme.autodiff(Enzyme.Reverse, func, Enzyme.Active, Enzyme.Active(v0))[1][1]
+                end
+                s_exp_raw.values[i] = r0 - df.values[i] * v0
+            end
+
+            # Scale original flux by derivative (interpolate to faces)
+            df_f = FaceScalarField(mesh)
+            for fID in eachindex(df_f.values)
+                oc = mesh.faces[fID].ownerCells
+                df_f.values[fID] = length(oc) > 1 ?
+                    0.5*(df.values[oc[1]] + df.values[oc[2]]) :
+                    df.values[oc[1]]
+            end
+
+            # Create linearized flux
+            lin_flux = FaceScalarField(mesh)
+            if typeof(inner_op.flux) <: FaceScalarField
+                lin_flux.values .= inner_op.flux.values .* df_f.values
+            elseif typeof(inner_op.flux) <: ScalarField
+                for fID in eachindex(lin_flux.values)
+                    oc = mesh.faces[fID].ownerCells
+                    f_val = length(oc) > 1 ? 0.5*(inner_op.flux.values[oc[1]] + inner_op.flux.values[oc[2]]) : inner_op.flux.values[oc[1]]
+                    lin_flux.values[fID] = f_val * df_f.values[fID]
+                end
+            else # ConstantScalar
+                lin_flux.values .= inner_op.flux.values .* df_f.values
+            end
+
+            push!(extra_sources, Source(s_exp_raw))
+            return Operator(lin_flux, inner_op.phi, inner_op.sign, inner_op.type)
+
+        # Case B: Standard Non-linear Implicit Source (NonLinearSi)
+        elseif hasproperty(term, :type) && typeof(term.type) <: NonLinearSi
             func = term.type.func
             k_imp = ScalarField(mesh)
             s_exp = ScalarField(mesh)
@@ -74,59 +125,6 @@ function linearize_physics(BCs, model_eqn::ModelEquation; susp=true, ad_backend=
             push!(extra_sources, Source(s_exp))
             return Si(k_imp, phi)
 
-        # Case B: Non-linear Differential Operators (Wrapped in NonlinearOperator)
-        elseif term isa NonlinearOperator
-            func = term.func
-            inner_op = term.op
-            
-            # Compute df/dphi at each cell
-            df = ScalarField(mesh)
-            s_exp_raw = ScalarField(mesh)
-            for i in eachindex(vals)
-                v0 = vals[i]
-                if ad_backend === :forwarddiff
-                    df.values[i] = ForwardDiff.derivative(func, v0)
-                    r0 = func(v0)
-                else # :enzyme
-                    r0 = func(v0)
-                    df.values[i] = Enzyme.autodiff(Enzyme.Reverse, func, Enzyme.Active, Enzyme.Active(v0))[1][1]
-                end
-                s_exp_raw.values[i] = r0 - df.values[i] * v0
-            end
-
-            # Scale original flux by derivative
-            # Note: For Divergence/Laplacian, kernels expect face-based fluxes.
-            df_f = FaceScalarField(mesh)
-            for fID in eachindex(df_f.values)
-                oc = mesh.faces[fID].ownerCells
-                df_f.values[fID] = length(oc) > 1 ?
-                    0.5*(df.values[oc[1]] + df.values[oc[2]]) :
-                    df.values[oc[1]]
-            end
-
-            # Create linearized flux
-            lin_flux = FaceScalarField(mesh)
-            if typeof(inner_op.flux) <: FaceScalarField
-                lin_flux.values .= inner_op.flux.values .* df_f.values
-            elseif typeof(inner_op.flux) <: ScalarField
-                # Interpolate inner_op.flux if it's cell-based
-                for fID in eachindex(lin_flux.values)
-                    oc = mesh.faces[fID].ownerCells
-                    f_val = length(oc) > 1 ? 0.5*(inner_op.flux.values[oc[1]] + inner_op.flux.values[oc[2]]) : inner_op.flux.values[oc[1]]
-                    lin_flux.values[fID] = f_val * df_f.values[fID]
-                end
-            else # ConstantScalar
-                lin_flux.values .= inner_op.flux.value .* df_f.values
-            end
-
-            # Handle the explicit part L(f(phi0) - f'(phi0)phi0)
-            # This is the "Source" contribution of the linearized operator.
-            # We add a Source(s_exp_raw) scaled by the original flux.
-            # For simplicity, we assume the operator can be approximated by a Source.
-            # (In a more advanced version, we'd apply the operator explicitly).
-            push!(extra_sources, Source(s_exp_raw)) # Approximation: treat residual as local source
-            
-            return Operator(lin_flux, inner_op.phi, inner_op.sign, inner_op.type)
         else
             return term
         end

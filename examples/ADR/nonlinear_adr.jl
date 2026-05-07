@@ -80,16 +80,16 @@ gamma = ConstantScalar(1e-4)
 
 @info "Solving Non-Linear Scalar Transport..."
 for i in 1:50
-    # 5.1 AUTOMATIC LINEARIZATION
-    new_bcs = linearize_bcs(BCs, model_with_C)
-    
+    # 5.1 AUTOMATIC LINEARIZATION (linearize NonLinearRobin BCs for C field)
+    new_C_bcs = linearize_bcs(BCs.C, C)
+
     # 5.2 Build/Update Equation with new BCs
     C_eqn = (
           Divergence{schemes.C.divergence}(mdotf, C)
         - Laplacian{schemes.C.laplacian}(gamma, C)
         ==
         Source(ConstantScalar(0.0))
-    ) → ScalarEquation(C, new_bcs.C)
+    ) → ScalarEquation(C, new_C_bcs)
 
     # Initialise solver
     @reset C_eqn.preconditioner = set_preconditioner(solvers.C.preconditioner, C_eqn)

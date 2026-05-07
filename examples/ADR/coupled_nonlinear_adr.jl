@@ -128,9 +128,9 @@ for outer in 1:n_outer
     @reset C1_eqn.preconditioner = set_preconditioner(solvers.C.preconditioner, C1_eqn)
     @reset C1_eqn.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C1_eqn))
 
-    # Automatic Linearization (BCs + Source)
-    updated_bcs1, C1_eqn = linearize_physics(BCs, C1_eqn; susp=true)
-    res1 = solve_equation!(C1_eqn, C1, updated_bcs1.C1, solvers.C, config)
+    # Automatic Linearization (BCs + Source) - pass field-specific BCs for NonLinearRobin
+    updated_bcs1, C1_eqn = linearize_physics(BCs.C1, C1_eqn; susp=true)
+    res1 = solve_equation!(C1_eqn, C1, updated_bcs1, solvers.C, config)
 
     # 7.2 SOLVE FOR C2
     C1_vals = Array(C1.values)
@@ -145,8 +145,8 @@ for outer in 1:n_outer
     @reset C2_eqn.preconditioner = set_preconditioner(solvers.C.preconditioner, C2_eqn)
     @reset C2_eqn.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C2_eqn))
 
-    updated_bcs2, C2_eqn = linearize_physics(BCs, C2_eqn; susp=true)
-    res2 = solve_equation!(C2_eqn, C2, updated_bcs2.C2, solvers.C, config)
+    updated_bcs2, C2_eqn = linearize_physics(BCs.C2, C2_eqn; susp=true)
+    res2 = solve_equation!(C2_eqn, C2, updated_bcs2, solvers.C, config)
 
     @printf("Outer %d: C1 Res = %.2e, C2 Res = %.2e\n", outer, res1, res2)
 

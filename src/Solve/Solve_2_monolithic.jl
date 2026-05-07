@@ -51,10 +51,6 @@ function solve_monolithic!(sys::MonolithicSystem, bcs_list, config)
     A_op = SparseXCSR(A_csr)
     ws = BicgstabWorkspace(KrylovConstructor(b_mono))
 
-    # Block-Jacobi Preconditioner: 
-    # Extract diagonal entries of A_mono to build a simple Jacobi preconditioner
-    P_diag = zeros(TF, N)
-
     res = TF(NaN)
     for iter in 1:iterations
 
@@ -64,20 +60,7 @@ function solve_monolithic!(sys::MonolithicSystem, bcs_list, config)
         # --- apply boundary conditions ---
         monolithic_apply_bcs!(sys, A_csr, b_mono, bcs_list, config)
 
-        # Update Jacobi preconditioner
-        for k in 1:N
-            diag_idx = spindex(A_csr.rowptr, A_csr.colval, k, k)
-            d_val = A_csr.nzval[diag_idx]
-            P_diag[k] = abs(d_val) > eps(TF) ? 1.0 / d_val : 1.0
-        end
-
-        # Solve with diagonal scaling
-        b_scaled = b_mono .* P_diag
-        # Matrix scaling: P_diag * A * P_diag? No, just left preconditioning.
-        # krylov_solve! doesn't take a vector for M, it takes an operator.
-        M_op = opDiagonal(P_diag)
-
-        krylov_solve!(ws, A_op, b_mono; M=M_op, atol=1e-12, rtol=1e-10, itmax=5000)
+        krylov_solve!(ws, A_op, b_mono; atol=1e-12, rtol=1e-10, itmax=5000, history=true)
 
         if !ws.stats.solved
             @warn "Monolithic BiCGSTAB iter=$iter: did not converge (niter=$(Krylov.iteration_count(ws)))"
