@@ -317,7 +317,7 @@ function solve_system!(phiEqn::ModelEquation, setup, result, component, config)
         )
 
     # Perform explicit step for Crank-Nicholson. Otherwise simply update field with solution
-    if typeof(phiEqn.model.terms[1].type) <: Time{CrankNicolson}
+    if hasproperty(phiEqn.model.terms[1], :type) && typeof(phiEqn.model.terms[1].type) <: Time{CrankNicolson}
         xcal_foreach(x, config) do i 
             x[i] = 2*x[i] - values[i]
         end

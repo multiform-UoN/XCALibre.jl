@@ -5,6 +5,7 @@ export _nzval, _colval, _rowptr
 export get_sparse_fields
 export XDir, YDir, ZDir, get_values
 export get_backend
+export _term_phi
 
 # Components
 struct XDir{T} 
@@ -34,13 +35,15 @@ ZDir() = ZDir(3)
 
 @inline _term_phi(term::Operator) = term.phi
 @inline _term_phi(term) = term.op.phi   # NonlinearOperator and future wrappers
+@inline _term_flux(term::Operator) = term.flux
+@inline _term_flux(term) = term.op.flux
 
 @inline get_phi(eqn::ModelEquation{T,M,E,S,P}) where {T,M,E,S,P} = begin
     _term_phi(eqn.model.terms[1])
 end
 
 @inline get_flux(eqn::ModelEquation{T,M,E,S,P}, ti::Integer) where {T,M,E,S,P} = begin 
-    eqn.model.terms[ti].flux
+    _term_flux(eqn.model.terms[ti])
 end
 
 @inline get_source(eqn::ModelEquation{T,M,E,S,P}, ti::Integer) where {T,M,E,S,P} = begin 
