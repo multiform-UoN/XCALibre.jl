@@ -1,4 +1,4 @@
-export discretise!, update_equation!
+export discretise!, update_equation!, assemble_matrix!, assemble_rhs!, explicit_residual!
 
 function discretise!(
     eqn::ModelEquation{T,M,E,S,P}, prev, config) where {T<:VectorModel,M,E,S,P}
@@ -319,5 +319,171 @@ end
 
     @inbounds begin
         nzval[i] = nzval0[i]
+    end
+end
+
+# ---------------------------------------------------------
+# PHASE 4: Split Assembly
+# ---------------------------------------------------------
+
+function assemble_matrix!(eqn::ModelEquation{T,M,E,S,P}, config) where {T<:ScalarModel,M,E,S,P}
+    (; hardware, runtime) = config
+    (; backend, workgroup) = hardware
+    mesh = get_phi(eqn).mesh
+    A = _A(eqn)
+    nzval = _nzval(A)
+    colval = _colval(A)
+    rowptr = _rowptr(A)
+    z = zero(eltype(nzval))
+    xcal_foreach(nzval, config) do i
+        nzval[i] = z 
+    end
+    ndrange = length(mesh.cells)
+    kernel! = _assemble_matrix_scalar_model!(_setup(backend, workgroup, ndrange)...)
+    kernel!(eqn.model, eqn.model.terms, mesh, nzval, colval, rowptr, get_values(get_phi(eqn), nothing), runtime)
+end
+
+@kernel function _assemble_matrix_scalar_model!(model::Model{TN,SN,T,S}, terms::TERMS, mesh, nzval::AbstractArray{F}, colval, rowptr, prev, runtime) where {TN,SN,T,S,F,TERMS}
+    i = @index(Global)
+    (; faces, cells, cell_faces, cell_neighbours, cell_nsign) = mesh
+    @inbounds begin
+        cell = cells[i]
+        (; faces_range) = cell
+        cIndex = spindex(rowptr, colval, i, i)
+        ac_sum = zero(F)
+        for fi in faces_range
+            fID = cell_faces[fi]
+            ns = cell_nsign[fi]
+            face = faces[fID]
+            nID = cell_neighbours[fi]
+            cellN = cells[nID]
+            nIndex = spindex(rowptr, colval, i, nID)
+            ac, an, _ = _scheme!(model, terms, nzval, cell, face, cellN, ns, i, nID, cIndex, nIndex, fID, prev, runtime)
+            ac_sum += ac
+            nzval[nIndex] = an
+        end
+        ac, _ = _scheme_source!(model, terms, cell, i, cIndex, prev, runtime)
+        nzval[cIndex] = ac_sum + ac
+    end
+end
+
+function assemble_matrix!(eqn::ModelEquation{T,M,E,S,P}, config) where {T<:VectorModel,M,E,S,P}
+    (; hardware, runtime) = config
+    (; backend, workgroup) = hardware
+    mesh = get_phi(eqn).mesh
+    A = _A(eqn)
+    A0 = _A0(eqn)
+    nzval = _nzval(A)
+    nzval0 = _nzval(A0)
+    colval = _colval(A)
+    rowptr = _rowptr(A)
+    z = zero(eltype(nzval))
+    xcal_foreach(nzval, config) do i
+        nzval0[i] = z 
+    end
+    ndrange = length(mesh.cells)
+    kernel! = _assemble_matrix_vector_model!(_setup(backend, workgroup, ndrange)...)
+    kernel!(eqn.model, eqn.model.terms, mesh, nzval0, colval, rowptr, get_phi(eqn), runtime)
+end
+
+@kernel function _assemble_matrix_vector_model!(model::Model{TN,SN,T,S}, terms::TERMS, mesh, nzval0::AbstractArray{F}, colval, rowptr, prev, runtime) where {TN,SN,T,S,F,TERMS}
+    i = @index(Global)
+    (; faces, cells, cell_faces, cell_neighbours, cell_nsign) = mesh
+    @inbounds begin
+        cell = cells[i]
+        (; faces_range) = cell
+        cIndex = spindex(rowptr, colval, i, i)
+        ac_sum = zero(F)
+        for fi in faces_range
+            fID = cell_faces[fi]
+            ns = cell_nsign[fi]
+            face = faces[fID]
+            nID = cell_neighbours[fi]
+            cellN = cells[nID]
+            nIndex = spindex(rowptr, colval, i, nID)
+            ac, an, _ = _scheme!(model, terms, nzval0, cell, face, cellN, ns, i, nID, cIndex, nIndex, fID, prev, runtime)
+            ac_sum += ac
+            nzval0[nIndex] = an
+        end
+        ac, _, _, _ = _scheme_source!(model, terms, cell, i, cIndex, prev, runtime)
+        nzval0[cIndex] = ac_sum + ac
+    end
+end
+
+function assemble_rhs!(eqn::ModelEquation{T,M,E,S,P}, source::AbstractSource, config) where {T<:ScalarModel,M,E,S,P}
+    (; hardware, runtime) = config
+    (; backend, workgroup) = hardware
+    mesh = get_phi(eqn).mesh
+    b = _b(eqn)
+    xcal_foreach(b, config) do i
+        b[i] = zero(eltype(b))
+    end
+    ndrange = length(mesh.cells)
+    kernel! = _assemble_rhs_scalar_model!(_setup(backend, workgroup, ndrange)...)
+    temp_sources = (source,)
+    kernel!(eqn.model, eqn.model.terms, temp_sources, mesh, b, get_values(get_phi(eqn), nothing), runtime)
+end
+
+@kernel function _assemble_rhs_scalar_model!(model::Model{TN,SN,T,S}, terms::TERMS, sources::SRCS, mesh, b::AbstractArray{F}, prev, runtime) where {TN,SN,T,S,F,TERMS,SRCS}
+    i = @index(Global)
+    (; faces, cells, cell_faces, cell_neighbours, cell_nsign) = mesh
+    @inbounds begin
+        cell = cells[i]
+        (; faces_range, volume) = cell
+        b[i] = zero(F)
+        for fi in faces_range
+            fID = cell_faces[fi]
+            ns = cell_nsign[fi]
+            face = faces[fID]
+            nID = cell_neighbours[fi]
+            cellN = cells[nID]
+            _, _, bface = _scheme!(model, terms, b, cell, face, cellN, ns, i, nID, 1, 1, fID, prev, runtime)
+            b[i] += bface
+        end
+        _, b1 = _scheme_source!(model, terms, cell, i, 1, prev, runtime)
+        b2 = _sources!(model, sources, volume, i)
+        b[i] += b2 + b1
+    end
+end
+
+# ---------------------------------------------------------
+# PHASE 5: Matrix-Free Evaluation
+# ---------------------------------------------------------
+
+function explicit_residual!(r::AbstractVector, eqn::ModelEquation{T,M,E,S,P}, phi, config) where {T<:ScalarModel,M,E,S,P}
+    (; hardware, runtime) = config
+    (; backend, workgroup) = hardware
+    mesh = get_phi(eqn).mesh
+    ndrange = length(mesh.cells)
+    kernel! = _explicit_residual_scalar!(_setup(backend, workgroup, ndrange)...)
+    kernel!(eqn.model, eqn.model.terms, eqn.model.sources, mesh, r, get_values(phi, nothing), runtime)
+end
+
+@kernel function _explicit_residual_scalar!(model::Model{TN,SN,T,S}, terms::TERMS, sources::SRCS, mesh, r::AbstractArray{F}, prev, runtime) where {TN,SN,T,S,F,TERMS,SRCS}
+    i = @index(Global)
+    (; faces, cells, cell_faces, cell_neighbours, cell_nsign) = mesh
+    @inbounds begin
+        cell = cells[i]
+        (; faces_range, volume) = cell
+        r[i] = zero(F)
+        ac_sum = zero(F)
+        an_phi_sum = zero(F)
+        b_sum = zero(F)
+        for fi in faces_range
+            fID = cell_faces[fi]
+            ns = cell_nsign[fi]
+            face = faces[fID]
+            nID = cell_neighbours[fi]
+            cellN = cells[nID]
+            ac, an, bface = _scheme!(model, terms, r, cell, face, cellN, ns, i, nID, 1, 1, fID, prev, runtime)
+            ac_sum += ac
+            an_phi_sum += an * prev[nID]
+            b_sum += bface
+        end
+        ac, b1 = _scheme_source!(model, terms, cell, i, 1, prev, runtime)
+        b2 = _sources!(model, sources, volume, i)
+        
+        # r = A*phi - b
+        r[i] = (ac_sum + ac) * prev[i] + an_phi_sum - (b_sum + b1 + b2)
     end
 end

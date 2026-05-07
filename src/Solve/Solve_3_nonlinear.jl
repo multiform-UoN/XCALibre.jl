@@ -2,7 +2,7 @@ using ForwardDiff
 using Enzyme
 using Accessors
 
-export linearize_physics, linearize_bcs
+export linearize_physics, linearize_bcs, homogeneous, newton_solve!
 
 # DSL constructor overloads: three-argument form returns NonlinearOperator wrapper
 # (extending constructors defined in ModelFramework)
@@ -12,11 +12,23 @@ ModelFramework.Laplacian{T}(flux, func::Function, phi) where T =
 ModelFramework.Divergence{T}(flux, func::Function, phi) where T =
     NonlinearOperator(Operator(flux, phi, 1, Divergence{T}()), NonlinearMap(func))
 
+ModelFramework.Laplacian{T}(flux, func::Function) where T =
+    NonlinearOperatorTemplate(OperatorTemplate(flux, 1, Laplacian{T}()), NonlinearMap(func))
+
+ModelFramework.Divergence{T}(flux, func::Function) where T =
+    NonlinearOperatorTemplate(OperatorTemplate(flux, 1, Divergence{T}()), NonlinearMap(func))
+
 ModelFramework.Laplacian{T}(flux, map::NonlinearMap, phi) where T =
     NonlinearOperator(Operator(flux, phi, 1, Laplacian{T}()), map)
 
 ModelFramework.Divergence{T}(flux, map::NonlinearMap, phi) where T =
     NonlinearOperator(Operator(flux, phi, 1, Divergence{T}()), map)
+
+ModelFramework.Laplacian{T}(flux, map::NonlinearMap) where T =
+    NonlinearOperatorTemplate(OperatorTemplate(flux, 1, Laplacian{T}()), map)
+
+ModelFramework.Divergence{T}(flux, map::NonlinearMap) where T =
+    NonlinearOperatorTemplate(OperatorTemplate(flux, 1, Divergence{T}()), map)
 
 # Two-argument constructor: NonLinearSi(func, phi) → Operator with NonLinearSi type tag
 ModelFramework.NonLinearSi(func::Function, phi) =
@@ -24,6 +36,33 @@ ModelFramework.NonLinearSi(func::Function, phi) =
 
 ModelFramework.NonLinearSi(map::NonlinearMap, phi) =
     Operator(nothing, phi, 1, NonLinearSi(map))
+
+@inline _zero_bc_value(value::Number) = zero(value)
+@inline _zero_bc_value(value::StaticArray) = zero(value)
+@inline _zero_bc_value(value::AbstractVector) = zero.(value)
+@inline _zero_bc_value(value) =
+    error("Cannot construct a homogeneous value for boundary value type $(typeof(value)).")
+
+@inline homogeneous(bc::Dirichlet) = Dirichlet(bc.ID, _zero_bc_value(bc.value), bc.IDs_range)
+@inline homogeneous(bc::Wall{I,V,R}) where {I,V<:Number,R} =
+    Wall(bc.ID, _zero_bc_value(bc.value), bc.IDs_range)
+@inline homogeneous(bc::Wall{I,V,R}) where {I,V<:StaticArray,R} =
+    Wall(bc.ID, _zero_bc_value(bc.value), bc.IDs_range)
+@inline homogeneous(bc::Robin) = Robin(
+    bc.ID,
+    RobinValue(a=bc.value.a, b=bc.value.b, value=_zero_bc_value(bc.value.value)),
+    bc.IDs_range,
+)
+@inline homogeneous(bc::Zerogradient) = bc
+@inline homogeneous(bc::Extrapolated) = bc
+@inline homogeneous(bc::Symmetry) = bc
+@inline homogeneous(bc::Outlet) = bc
+@inline homogeneous(bc::Tuple{}) = ()
+@inline homogeneous(BCs::Tuple) = map(homogeneous, BCs)
+@inline homogeneous(BCs::AbstractVector{<:AbstractBoundary}) = map(homogeneous, BCs)
+@inline homogeneous(L::PDEOperator) = PDEOperator(L.templates, (), homogeneous(L.BCs), L.setup)
+@inline homogeneous(bc::AbstractBoundary) =
+    error("Boundary $(typeof(bc)) does not have a homogeneous transformation yet.")
 
 # ---------------------------------------------------------------------------
 # linearize_bcs: replace NonLinearRobin BCs with their Newton-linearised Robin
@@ -145,4 +184,61 @@ function linearize_physics(BCs, model_eqn::ModelEquation; susp=false, ad_backend
     new_model = Model{length(new_terms_tuple), length(new_sources)}(new_terms_tuple, new_sources)
 
     return new_bcs, @set model_eqn.model = new_model
+end
+
+function _newton_tolerance(model_eqn, tol)
+    tol !== nothing && return tol
+    setup = model_eqn.setup
+    setup === nothing && return sqrt(eps(_get_float(get_phi(model_eqn).mesh)))
+    return setup.convergence
+end
+
+function _with_bcs(model_eqn::ModelEquation, BCs)
+    @set model_eqn.equation.BCs = BCs
+end
+
+function newton_solve!(
+    model_eqn::ModelEquation{T,M,E,S,P}, config;
+    tol=nothing, maxiter=config.runtime.iterations, damping=1.0,
+    susp=false, ad_backend=:forwarddiff, verbose=false,
+    exact_residual=true
+) where {T<:ScalarModel,M,E,S,P}
+    phi = get_phi(model_eqn)
+    tolerance = _newton_tolerance(model_eqn, tol)
+    TF = _get_float(phi.mesh)
+    history = TF[]
+    converged = false
+
+    for iter in 1:maxiter
+        updated_bcs, linear_eqn = linearize_physics(get_bcs(model_eqn), model_eqn; susp=susp, ad_backend=ad_backend)
+        linear_eqn = _with_bcs(linear_eqn, updated_bcs)
+
+        # exact_residual=true  → r = A_lin*u - b_lin = F(u_k) exactly (Newton linearisation
+        #                          ensures A_lin*u - b_lin = F_nonlinear(u_k) at current u_k)
+        # exact_residual=false → cheap Krylov monitor norm ||b - A*x||/||b|| from last solve
+        if exact_residual
+            r = residual(linear_eqn, config)
+            rnorm = residual_norm(r)
+        else
+            rnorm = solve_residual(linear_eqn, 1, config)
+        end
+        push!(history, TF(rnorm))
+        verbose && @info "Newton iteration $iter" residual=rnorm
+        if rnorm <= tolerance
+            converged = true
+            break
+        end
+
+        previous = copy(phi.values)
+        solve_equation!(linear_eqn, config)
+        if damping != 1
+            @. phi.values = previous + damping * (phi.values - previous)
+        end
+    end
+
+    return (converged=converged, iterations=length(history), residuals=history)
+end
+
+function newton_solve!(L::PDEOperator, phi::ScalarField, config; kwargs...)
+    newton_solve!(L(phi), config; kwargs...)
 end

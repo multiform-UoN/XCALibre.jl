@@ -76,9 +76,9 @@ for fID in eachindex(mdotf.values)
     mdotf.values[fID] = 0.4 + 0.03 * fID
 end
 
-function residual(eqn, phi, BCs, config)
+function assembled_residual(eqn, phi, BCs, config)
     discretise!(eqn, phi, config)
-    apply_boundary_conditions!(eqn, BCs, nothing, 0.0, config)
+    apply_boundary_conditions!(eqn, config; time=0.0)
     return eqn.equation.A.parent * Vector(phi.values) - Vector(eqn.equation.b)
 end
 
@@ -103,8 +103,8 @@ function assert_discrete_newton_match(nonlinear_term, direct_term)
         Source(ConstantScalar(0.0))
     ) → ScalarEquation(F, BCs_f.C)
 
-    r_linear = residual(linear_eqn, C, updated_bcs, config_phi)
-    r_direct = residual(direct_eqn, F, BCs_f.C, config_f)
+    r_linear = assembled_residual(linear_eqn, C, updated_bcs, config_phi)
+    r_direct = assembled_residual(direct_eqn, F, BCs_f.C, config_f)
 
     @test r_linear ≈ r_direct atol=1e-11 rtol=1e-11
 end

@@ -1,6 +1,7 @@
 module Solve
 
 using Adapt
+using Accessors
 using Krylov
 using Statistics
 using SparseArrays
@@ -15,6 +16,7 @@ import KrylovPreconditioners as KP
 using LinearAlgebra
 using SparseMatricesCSR
 using Krylov
+using StaticArrays: StaticArray
 
 using XCALibre.Multithread
 using XCALibre.Mesh

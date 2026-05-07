@@ -80,22 +80,22 @@ gamma = ConstantScalar(1e-4) # Diffusion coefficient
 k_vol = ConstantScalar(0.1)  # Volumetric reaction rate (consumption)
 
 # Define ADR Equation
-# We'll use the ModelFramework DSL
-C_eqn = (
-      Divergence{schemes.C.divergence}(mdotf, C)
-    - Laplacian{schemes.C.laplacian}(gamma, C)
-    + Si(k_vol, C) # Implicit reaction term k_vol * C
+# We'll use the new PDEOperator DSL
+L_C = ((
+      Divergence{schemes.C.divergence}(mdotf)
+    - Laplacian{schemes.C.laplacian}(gamma)
+    + Si(k_vol) # Implicit reaction term k_vol * C
     ==
-    Source(ConstantScalar(0.0))
-) → ScalarEquation(C, BCs.C)
+    Source(0.0)
+) → BCs.C) → solvers.C
 
-# Initialise solver for C
+C_eqn = L_C(C)
 @reset C_eqn.preconditioner = set_preconditioner(solvers.C.preconditioner, C_eqn)
 @reset C_eqn.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C_eqn))
 
 @info "Solving Scalar Transport..."
 for i in 1:100
-    res = solve_equation!(C_eqn, C, BCs.C, solvers.C, config)
+    res = solve_equation!(C_eqn, config)
     if i % 10 == 0
         println("Iteration $i, C Residual: $res")
     end

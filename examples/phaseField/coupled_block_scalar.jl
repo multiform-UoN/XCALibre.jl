@@ -42,36 +42,38 @@ config = Configuration(solvers=solvers, schemes=schemes, runtime=Runtime(iterati
 C1 = ScalarField(mesh_dev); initialise!(C1, 1.0)
 C2 = ScalarField(mesh_dev); initialise!(C2, 0.0)
 
-# 4. Define Coupled Equations using CoupledSi
-# Note: CoupledSi(flux, source_field, target_field)
+# 4. Define Coupled Equations using Si
 C1_eqn = (
       Time{schemes.C.time}(C1)
     - Laplacian{schemes.C.laplacian}(ConstantScalar(D), C1)
-    + CoupledSi(ConstantScalar(k_coupling), C2, C1) # k_12 * C2
+    + Si(ConstantScalar(k_coupling), C2) # k_12 * C2
     ==
-    Source(ConstantScalar(0.0))
+    Source(0.0)
 ) → ScalarEquation(C1, BCs.C1)
 
 C2_eqn = (
       Time{schemes.C.time}(C2)
     - Laplacian{schemes.C.laplacian}(ConstantScalar(D), C2)
-    + CoupledSi(ConstantScalar(k_coupling), C1, C2) # k_21 * C1
+    + Si(ConstantScalar(k_coupling), C1) # k_21 * C1
     ==
-    Source(ConstantScalar(0.0))
+    Source(0.0)
 ) → ScalarEquation(C2, BCs.C2)
 
 # Initialise Solvers
 @reset C1_eqn.preconditioner = set_preconditioner(solvers.C.preconditioner, C1_eqn)
 @reset C1_eqn.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C1_eqn))
+@reset C1_eqn.setup = solvers.C
+
 @reset C2_eqn.preconditioner = set_preconditioner(solvers.C.preconditioner, C2_eqn)
 @reset C2_eqn.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C2_eqn))
+@reset C2_eqn.setup = solvers.C
 
 @info "Solving Block-Coupled Scalar System..."
 for step in 1:10
     # Outer iterations for coupling
     for outer in 1:3
-        res1 = solve_equation!(C1_eqn, C1, BCs.C1, solvers.C, config)
-        res2 = solve_equation!(C2_eqn, C2, BCs.C2, solvers.C, config)
+        res1 = solve_equation!(C1_eqn, config)
+        res2 = solve_equation!(C2_eqn, config)
         
         if outer == 3
             @printf("Step %d: C1 Res = %.2e, C2 Res = %.2e, Mean C1 = %.4f\n", 

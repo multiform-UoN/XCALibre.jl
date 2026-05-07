@@ -77,21 +77,23 @@ alpha_flux = ConstantScalar(alpha_val)
 # Laplacian contributes μ * area/delta per face.
 # GradDiv{1,1} contributes α * e_x * Sf_x / delta = α * area/delta on x-aligned faces.
 # Total axial stiffness = μ + α = 2μ+λ = M_wave  ✓
-u_eqn = (
-    - Laplacian{Linear}(mu_flux,    u)
-    - GradDiv{Linear,1,1}(alpha_flux, u)
-    == Source(ConstantScalar(0.0))
-) → ScalarEquation(u, BCs.u)
+L_u = ((
+    - Laplacian{Linear}(mu_flux)
+    - GradDiv{Linear,1,1}(alpha_flux)
+    == Source(0.0)
+) → BCs.u) → solvers.u
+
+u_eqn = L_u(u)
+@reset u_eqn.preconditioner = set_preconditioner(solvers.u.preconditioner, u_eqn)
+@reset u_eqn.solver = XCALibre._workspace(solvers.u.solver, XCALibre._b(u_eqn))
 
 # ── Solve ─────────────────────────────────────────────────────────────────────
 @info "Solving 1-field linear elastic equation..."
-@reset u_eqn.preconditioner = set_preconditioner(solvers.u.preconditioner, u_eqn)
-@reset u_eqn.solver = XCALibre._workspace(solvers.u.solver, XCALibre._b(u_eqn))
 
 # Iterate until convergence (the linear system is solved exactly when res < convergence)
 res = let r = Inf
     for i in 1:50
-        r = solve_equation!(u_eqn, u, BCs.u, solvers.u, config)
+        r = solve_equation!(u_eqn, config)
         r < solvers.u.convergence && break
     end
     r

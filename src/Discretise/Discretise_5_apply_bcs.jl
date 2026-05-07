@@ -2,6 +2,10 @@ export apply_boundary_conditions!
 
 
 
+apply_boundary_conditions!(eqn, config; time=nothing, component=nothing) = begin
+    _apply_boundary_conditions!(eqn.model, get_bcs(eqn), eqn, component, time, config)
+end
+
 apply_boundary_conditions!(eqn, BCs, component, time, config) = begin
     _apply_boundary_conditions!(eqn.model, BCs, eqn, component, time, config)
 end

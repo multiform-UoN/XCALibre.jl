@@ -217,7 +217,7 @@ function energy!(
 
     # Set up and solve energy equation
     discretise!(energy_eqn, he, config)
-    apply_boundary_conditions!(energy_eqn, boundaries.he, nothing, time, config)
+    apply_boundary_conditions!(energy_eqn, config; time=time)
     implicit_relaxation_diagdom!(energy_eqn, he.values, solvers.he.relax, nothing, config)
     update_preconditioner!(energy_eqn.preconditioner, mesh, config)
     he_res = solve_system!(energy_eqn, solvers.he, he, nothing, config)

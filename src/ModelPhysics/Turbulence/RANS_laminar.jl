@@ -134,11 +134,15 @@ function save_output(model::Physics{T,F,SO,M,Tu,E,D,BI}, outputWriter, iteration
 
     # Minimal output: Velocity and Pressure if they exist
     args = []
-    if hasproperty(model.momentum, :U) push!(args, ("U", model.momentum.U)) end
-    if hasproperty(model.momentum, :p) push!(args, ("p", model.momentum.p)) end
-
-    # Add any extra fields found in the model
-    # (Future expansion: check for ScalarFields C1, C2 etc.)
+    if !isnothing(model.momentum)
+        if hasproperty(model.momentum, :U) push!(args, ("U", model.momentum.U)) end
+        if hasproperty(model.momentum, :p) push!(args, ("p", model.momentum.p)) end
+    end
+    
+    # Add temperature
+    if !isnothing(model.energy)
+        push!(args, ("T", model.energy.T))
+    end
 
     write_results(iteration, time, model.domain, outputWriter, config.boundaries, args...)
 end

@@ -71,14 +71,15 @@ pkg> add XCALibre https://github.com/mberto79/XCALibre.jl.git#dev-0.3-main
 Code example
 
 ```julia
-U_eqn = (
-          Time{schemes.U.time}(U)
-        + Divergence{schemes.U.divergence}(mdotf, U) 
-        - Laplacian{schemes.U.laplacian}(nueff, U) 
+L_U = ((
+          Time{schemes.U.time}()
+        + Divergence{schemes.U.divergence}(mdotf) 
+        - Laplacian{schemes.U.laplacian}(nueff) 
         == 
-        -Source(∇p.result)
+        Source(-∇p.result)
+      ) → BCs.U) → solvers.U
 
-      ) → VectorEquation(mesh)
+U_eqn = L_U(U)
 ```
 
 ## Main dependencies
@@ -122,15 +123,100 @@ If you have used XCALibre.jl in your work, please cite it using the reference be
 ```
   
 
-## multiform-UoN Fork Enhancements
+## multiform-UoN Fork New Features
 
-This fork adds advanced capabilities for porous media upscaling, non-linear ADR, and phase-field modelling:
+This fork extends XCALibre.jl with capabilities for nonlinear physics, coupled multi-field solvers, and a higher-level PDE abstraction layer.
 
-- **Automated Newton Linearisation:** Support for arbitrary non-linear operators and sources via `Enzyme.jl` and `ForwardDiff.jl`.
-- **Monolithic Block-Coupled Solvers:** Solve multiple coupled fields (e.g. Cahn-Hilliard, Poroelasticity) in a single sparse matrix.
-- **Higher-Order Derivatives:** Implementation of the 4th-order `Biharmonic` operator natively in the DSL.
-- **Robin Boundary Conditions:** Generalized $a\phi + b\partial_n\phi = c$ conditions.
-- **Extended Post-processing:** Tools for volume averaging, point sampling, and upscaled property calculation (e.g. permeability tensors).
+### Operator-First PDE DSL
 
-See `examples/` and `tutorials/` for usage.
+Equations are defined independently of fields, then bound at solve time — similar to [Chebfun](https://www.chebfun.org/):
+
+```julia
+# Define the PDE once
+L = (
+      Divergence{Upwind}(mdotf)
+    - Laplacian{Linear}(D)
+    + NonLinearSi(NonlinearMap(c -> k*c^2))
+    == Source(0.0)
+) → BCs.C → solvers.C
+
+# Bind to any field and solve
+C_eqn = L(C)
+solve_equation!(C_eqn, config)        # linear solve
+newton_solve!(L, C, config; tol=1e-8) # Newton solve — same operator
+```
+
+Boundary conditions and solver settings travel with the operator. No manual `@reset` bookkeeping.
+
+### Newton Linearisation with Automatic Differentiation
+
+Nonlinear operators and sources are linearised automatically each Newton iteration using ForwardDiff (or a user-supplied analytic derivative):
+
+```julia
+# Nonlinear reaction k·C² — no manual Jacobian needed
+L = -Laplacian{Linear}(D) + NonLinearSi(NonlinearMap(c -> k*c^2)) == Source(f)
+result = newton_solve!(L → BCs → solvers, C, config; tol=1e-8, maxiter=20, verbose=true)
+```
+
+`homogeneous(L)` automatically zeros Dirichlet values for the correction step, giving a correct Newton BVP for δC without any user intervention.
+
+### Monolithic Block-Coupled Solvers
+
+Multiple coupled scalar equations are assembled into a single block-sparse system and solved simultaneously:
+
+```julia
+sys = MonolithicSystem([u_eqn, v_eqn], [u, v])
+solve_monolithic!(sys, (BCs.u, BCs.v), config)
+```
+
+Used for linear elasticity, Cahn-Hilliard phase field, and multi-species transport.
+
+### GradDiv Operator for Elasticity
+
+The `GradDiv{T,I,J}` operator assembles the full Cauchy-stress stiffness `(μ+λ)∂(∇·U)/∂xᵢ` block-coupled with the standard Laplacian — no gradient-transpose postprocessing required:
+
+```julia
+u_eqn = (
+    - Laplacian{Linear}(mu_flux, u)
+    - GradDiv{Linear,1,1}(alpha_flux, u)
+    - GradDiv{Linear,1,2}(alpha_flux, v)
+    == Source(0.0)
+) → ScalarEquation(u, BCs.u)
+```
+
+### Higher-Order Operators
+
+`Biharmonic{T}` implements the 4th-order operator Δ²ϕ natively in the FVM DSL, enabling Cahn-Hilliard and thin-film phase-field models without operator splitting.
+
+### Robin and Nonlinear Robin Boundary Conditions
+
+Generalised `a·ϕ + b·∂ₙϕ = c` conditions, including a nonlinear variant linearised automatically each outer iteration.
+
+### Split Assembly and Residual API
+
+```julia
+assemble_matrix!(eqn, config)          # build A once for parametric/linear problems
+assemble_rhs!(eqn, new_source, config) # swap RHS without rebuilding A
+r = residual(L, phi, config)           # mathematical residual vector Au - b
+explicit_residual!(r, eqn, phi, config) # matrix-free residual kernel (JFNK foundation)
+```
+
+### Extended Post-Processing and Homogenisation
+
+Volume averaging, permeability tensor computation (2D/3D), and dispersivity optimisation for porous media upscaling. See `examples/homogenisation/`.
+
+### New Examples
+
+| Example | Feature demonstrated |
+|---|---|
+| `ADR/adr_scalar.jl` | PDEOperator DSL, Robin BC, full SIMPLE + scalar transport |
+| `ADR/nonlinear_adr.jl` | Newton solve of nonlinear ADR |
+| `ADR/monolithic_quad_laplacian.jl` | Block-coupled monolithic solve |
+| `linearElastic/linear_elastic_2d.jl` | 2-field monolithic elasticity via GradDiv |
+| `phaseField/cahn_hilliard_monolithic.jl` | Biharmonic + monolithic Cahn-Hilliard |
+| `thinFilm/thin_film_multiform.jl` | Coupled thin-film (viscous + Darcy) |
+| `homogenisation/permeability_tensor_2d.jl` | Upscaled permeability from pore-scale DNS |
+| `poroelastic/biot_consolidation_1d.jl` | Biot consolidation: elastic MonolithicSystem + transient pressure PDEOperator |
+
+See `examples/` for full usage and `TODO.md` for the development roadmap.
 

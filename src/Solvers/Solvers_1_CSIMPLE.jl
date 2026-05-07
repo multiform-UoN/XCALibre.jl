@@ -100,7 +100,9 @@ function setup_compressible_solvers(
     @info "Pre-allocating solvers..."
      
     @reset U_eqn.solver = _workspace(solvers.U.solver, _b(U_eqn, XDir()))
+    @reset U_eqn.setup = solvers.U
     @reset p_eqn.solver = _workspace(solvers.p.solver, _b(p_eqn))
+    @reset p_eqn.setup = solvers.p
   
     @info "Initialising energy model..."
     energyModel = initialise(model.energy, model, mdotf, rho, p_eqn, config)
@@ -220,9 +222,7 @@ function CSIMPLE(
         @. model.energy.prevP = p.values
 
         # Set up and solve momentum equations
-        rx, ry, rz = solve_equation!(
-            U_eqn, U, boundaries.U, solvers.U, xdir, ydir, zdir, config
-            )
+        rx, ry, rz = solve_equation!(U_eqn, config)
 
         # Solve energy equation and update thermo properties
         energy!(energyModel, model, mdotf, ∇p, gradU, mueff, time, dt_cpu[1], config)
@@ -264,10 +264,10 @@ function CSIMPLE(
         @. prev = p.values
         if typeof(model.fluid) <: Compressible
             rp = solve_equation!(
-                p_eqn, p, boundaries.p, solvers.p, config; 
+                p_eqn, config; 
                 ref=nothing, irelax=solvers.p.relax) # perform implicit relaxation
         elseif typeof(model.fluid) <: WeaklyCompressible
-            rp = solve_equation!(p_eqn, p, boundaries.p, solvers.p, config; ref=nothing)
+            rp = solve_equation!(p_eqn, config; ref=nothing)
         end
 
         if !isnothing(solvers.p.limit)
@@ -282,7 +282,7 @@ function CSIMPLE(
         # non-orthogonal correction
         for i ∈ 1:ncorrectors
             discretise!(p_eqn, p, config)       
-            apply_boundary_conditions!(p_eqn, boundaries.p, nothing, time, config)
+            apply_boundary_conditions!(p_eqn, config; time=time)
             setReference!(p_eqn, pref, 1, config)
             nonorthogonal_face_correction(p_eqn, ∇p, rhorDf, config)
             update_preconditioner!(p_eqn.preconditioner, p.mesh, config)

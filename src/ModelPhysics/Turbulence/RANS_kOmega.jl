@@ -126,7 +126,9 @@ function initialise(
     
     # preallocating solvers
     @reset k_eqn.solver = _workspace(solvers.k.solver, _b(k_eqn))
+    @reset k_eqn.setup = solvers.k
     @reset ω_eqn.solver = _workspace(solvers.omega.solver, _b(ω_eqn))
+    @reset ω_eqn.setup = solvers.omega
 
     initial_residual = ((:k, 1.0),(:omega, 1.0))
     return KOmegaModel(
@@ -191,7 +193,7 @@ function turbulence!(
     # Solve omega equation
     # prev .= omega.values
     discretise!(ω_eqn, omega, config)
-    apply_boundary_conditions!(ω_eqn, boundaries.omega, nothing, time, config)
+    apply_boundary_conditions!(ω_eqn, config; time=time)
     # implicit_relaxation!(ω_eqn, omega.values, solvers.omega.relax, nothing, config)
     implicit_relaxation_diagdom!(ω_eqn, omega.values, solvers.omega.relax, nothing, config)
     constrain_equation!(ω_eqn, boundaries.omega, model, config) # active with WFs only
@@ -205,7 +207,7 @@ function turbulence!(
     # Solve k equation
     # prev .= k.values
     discretise!(k_eqn, k, config)
-    apply_boundary_conditions!(k_eqn, boundaries.k, nothing, time, config)
+    apply_boundary_conditions!(k_eqn, config; time=time)
     # implicit_relaxation!(k_eqn, k.values, solvers.k.relax, nothing, config)
     implicit_relaxation_diagdom!(k_eqn, k.values, solvers.k.relax, nothing, config)
     update_preconditioner!(k_eqn.preconditioner, mesh, config)

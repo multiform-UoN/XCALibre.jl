@@ -254,6 +254,49 @@ end
     term::Operator{F,P,I,GradDiv{T,I_ROW,J_COL}}, cell, cID, cIndex, prev, runtime
 ) where {F,P,I,T,I_ROW,J_COL} = (0.0, 0.0)
 
+# SCALARGRAD — gradient of a scalar field, component I
+#
+# Two-point FVM approximation of ∂φ/∂x_I for any scalar field φ.
+# Face coefficient = flux * face.e[I] * area / delta
+#
+# Typical uses: pressure-gradient in momentum equations, chemical-potential
+# gradient in phase-field, any off-diagonal scalar-gradient coupling.
+# In a MonolithicSystem, `term.phi` determines the column block.
+@inline function scheme!(
+    term::Operator{F,P,I,ScalarGrad{T,I_ROW}},
+    nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
+) where {F,P,I,T,I_ROW}
+    e_I = face.e[I_ROW]
+    ap  = term.sign * term.flux[fID] * e_I * face.area / face.delta
+    return -ap, ap
+end
+
+@inline scheme_source!(
+    term::Operator{F,P,I,ScalarGrad{T,I_ROW}}, cell, cID, cIndex, prev, runtime
+) where {F,P,I,T,I_ROW} = (0.0, 0.0)
+
+# VECTORDIV — J-th component of divergence of a vector field
+#
+# Two-point FVM approximation of ∂u_J/∂x_J for any scalar component u_J.
+# Face coefficient = flux * face.e[J] * area / delta
+#
+# Typical uses: ∇·u in continuity/pressure equations, volumetric strain
+# in Biot consolidation, any off-diagonal divergence coupling.
+# Sum VectorDiv{T,J} over J = 1…d to form ∇·u in a scalar equation.
+# In a MonolithicSystem, `term.phi` (= u_J) determines the column block.
+@inline function scheme!(
+    term::Operator{F,P,I,VectorDiv{T,J_COL}},
+    nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
+) where {F,P,I,T,J_COL}
+    e_J = face.e[J_COL]
+    ap  = term.sign * term.flux[fID] * e_J * face.area / face.delta
+    return -ap, ap
+end
+
+@inline scheme_source!(
+    term::Operator{F,P,I,VectorDiv{T,J_COL}}, cell, cID, cIndex, prev, runtime
+) where {F,P,I,T,J_COL} = (0.0, 0.0)
+
 # IMPLICIT SOURCE
 @inline function scheme!(
     term::Operator{F,P,I,Si}, 

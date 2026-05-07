@@ -1,4 +1,4 @@
-export get_phi, get_flux
+export get_phi, get_flux, get_bcs
 export get_source, get_source_sign
 export _A, _A0, _b
 export _nzval, _colval, _rowptr
@@ -44,6 +44,10 @@ end
 
 @inline get_flux(eqn::ModelEquation{T,M,E,S,P}, ti::Integer) where {T,M,E,S,P} = begin 
     _term_flux(eqn.model.terms[ti])
+end
+
+@inline get_bcs(eqn::ModelEquation{T,M,E,S,P}) where {T,M,E,S,P} = begin
+    eqn.equation.BCs
 end
 
 @inline get_source(eqn::ModelEquation{T,M,E,S,P}, ti::Integer) where {T,M,E,S,P} = begin 

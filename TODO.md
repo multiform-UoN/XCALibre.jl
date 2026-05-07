@@ -1,38 +1,101 @@
 # TODO: Roadmap for Advanced Upscaling & Coupled Solvers in XCALibre.jl
 
-## 1. Monolithic Coupled Solvers
-**Feasibility: High**
-*   **Current State:** XCALibre solves equations sequentially (Segregated approach).
-*   **Proposed Structure:** Leverage `BlockSparseMatrices.jl` or simply concatenate the CSR arrays into a single large system $[A_{uu} A_{up}; A_{pu} A_{pp}]$. 
-*   **Switching Mechanism:** Use Julia's multiple dispatch to allow `solve_system!` to take a `Vector{ModelEquation}`.
-*   **Benefits:** Faster convergence for highly coupled physics (e.g., Poroelasticity, high-Re flow).
+## COMPLETED
 
-## 2. Generic Newton Linearization
-**Feasibility: Completed (Enzyme & ForwardDiff supported)**
-*   **Current State:** Implemented `NonLinearSi`, `NonLinearRobin`, and generic non-linear support for standard operators (Divergence/Laplacian).
-*   **Architecture:** Layered AD strategy (ForwardDiff for local, Enzyme for global).
-*   **Next Step:** Full GPU differentiation kernels using Enzyme.
+### Monolithic Block-Coupled Solvers
+- `MonolithicSystem` assembles multiple scalar equations into a single block-sparse system
+- Term-to-column routing via `field_to_idx` (objectid-based, no special coupling operator needed)
+- `solve_monolithic!` solves the assembled block system
+- Examples: `monolithic_quad_laplacian.jl`, `linear_elastic_2d.jl`, `cahn_hilliard_monolithic.jl`
 
-## 3. Higher Order FV Operators
-**Feasibility: Completed (Splitting & wide stencil supported)**
-*   **Current State:** Implemented `Biharmonic` (4th order) operator. Supports both monolithic mixed-splitting (recommended) and extended-stencil single-equation.
-*   **Sparsity:** `extended_sparse_matrix_connectivity` implemented for wide stencils.
+### Newton Linearisation (ForwardDiff + Enzyme)
+- `NonLinearSi(func)` — nonlinear implicit source, linearised per cell
+- `NonlinearOperator` — wraps any differential operator (Laplacian, Divergence) with a nonlinear map
+- `NonlinearOperatorTemplate` — field-free nonlinear template for PDEOperator DSL
+- `NonLinearRobin` — nonlinear boundary condition, linearised at each outer iteration
+- `linearize_physics(BCs, eqn)` — full Newton pre-pass via ForwardDiff (Enzyme optional)
+- `newton_solve!(L, phi, config)` — self-contained Newton loop with convergence history
+- `homogeneous(L)` — zeros all Dirichlet values for correction-step BVPs
+- Examples: `nonlinear_adr.jl`, `nonlinear_ops_adr.jl`, `nonlinear_source_adr.jl`
 
-## 7. Monolithic Block-Coupled Solvers
-**Feasibility: Completed (Prototype implemented)**
-*   **Current State:** `MonolithicSystem` and `solve_monolithic!` allow solving multiple fields in a single sparse matrix.
-*   **Optimization:** Implement better block-preconditioners (Schur-complement based) for stiff problems like Cahn-Hilliard.
+### Operator-First PDE Abstraction (Chebfun-style)
+- `OperatorTemplate{F,S,T}` — operator without bound field; all existing operators return templates when called with flux only
+- `PDEOperator` — container of templates + sources + BCs + SolverSetup
+- DSL: `L = -Laplacian{Linear}(D) + Si(k) == Source(f)` → `L → BCs → solvers.C` → `eqn = L(phi)`
+- `→ BoundaryCollection` attaches BCs; `→ SolverSetup` attaches solver config; fallback errors clearly
+- `Source(x::Number)` auto-wraps to `ConstantScalar`
+- `solve_equation!(eqn, config)` — self-contained solve from stored BCs and setup
+- `ModelEquation` now stores BCs (`eqn.equation.BCs`) and SolverSetup (`eqn.setup`)
 
-## 4. Gradient Transpose Operator ($\nabla u^T$)
-**Feasibility: High**
-*   **Problem in OpenFOAM:** Standard OpenFOAM stencils and matrix-free structures make direct manipulation of the full gradient tensor difficult in a single matrix assembly.
-*   **XCALibre Advantage:** Since we have the full sparse matrix $A$, we can implement the transpose coupling directly.
-*   **Application:** Essential for the full Stress Tensor in complex rheology and for accurate adjoint-based optimization.
+### Residual and Split-Assembly API (Phases 3–5)
+- `residual(eqn, config)` / `residual!(r, eqn, config)` — mathematical residual vector `Au - b`
+- `residual(L, phi, config)` — operator-first residual evaluation
+- `residual_norm(r)` / `residual_norm(eqn, config)` — norm of mathematical residual
+- `solve_residual(eqn, component, config)` — solver monitor norm (renamed from old `residual`)
+- `assemble_matrix!(eqn, config)` — assemble stiffness matrix only (Phase 4)
+- `assemble_rhs!(eqn, source, config)` — assemble RHS only, swap sources without rebuilding A (Phase 4)
+- `explicit_residual!(r, eqn, phi, config)` — matrix-free residual kernel (Phase 5 foundation)
 
-## 5. Generic Periodic BCs with Rotations
-**Feasibility: Completed (Initial implementation)**
-*   I have already refactored `Periodic` to use `transform_point(transform, p)`. This should be further optimized for GPU kernels to avoid CPU-based mapping during every matrix assembly.
+### Higher-Order Operators
+- `Biharmonic{T}` — 4th-order operator (Δ²ϕ) with extended stencil support
+- `extended_sparse_matrix_connectivity` — 2nd-degree neighbour stencil for wide-stencil operators
+- Examples: `biharmonic_operator.jl`, `cahn_hilliard_scalar.jl`
 
-## 6. SciML and Neural Network Integration
-*   **Lux.jl Integration:** Prefer `Lux.jl` over `Flux.jl` for scientific ML components (surrogates, learned preconditioners) due to its explicit state/parameter separation and Enzyme compatibility.
-*   **Differentiable Simulation:** Targeted goal is a fully differentiable PDE framework allowing for sensitivity analysis, topology optimization, and inverse problems.
+### GradDiv Operator (replaces gradient transpose)
+- `GradDiv{T,I,J}(flux)` — implicit two-point FVM operator for the (I,J) block of `(μ+λ)∇(∇·U)`
+- Assembles full Cauchy-stress stiffness block-coupled with `Laplacian{Linear}(mu, U_i)`
+- Replaces the need for a separate gradient-transpose operator: the off-diagonal blocks `GradDiv{T,i,j}` cover all coupling terms exactly
+- Examples: `linear_elastic_1field.jl`, `linear_elastic_2d.jl`
+
+### Robin and NonLinear Robin Boundary Conditions
+- `Robin(:patch, a=..., b=..., value=...)` — generalised `a·ϕ + b·∂ₙϕ = c`
+- `NonLinearRobin` — nonlinear Robin, linearised each outer iteration
+- Tests: `unit_test_robin.jl`
+
+### Periodic BC with Rotational Transform
+- `RotationalTransform` + `transform_point` for rotationally periodic meshes
+
+### Extended Post-Processing and Homogenisation
+- Volume averaging, permeability tensor (2D/3D), dispersivity optimisation
+- Examples: `homogenisationFoam.jl`, `permeability_tensor_2d/3d.jl`, `optimise_dispersivity.jl`
+
+### Additional Examples
+- Thin-film: viscous (`thin_film_shallow_water.jl`), Darcy (`thin_film_darcy.jl`), coupled (`thin_film_multiform.jl`)
+- Phase field: Cahn-Hilliard scalar and monolithic, biharmonic demo
+- Linear elastic: 1-field bar stretch, 2-field monolithic uniaxial
+
+---
+
+## PENDING
+
+### GPU Newton / Enzyme Device Path
+- Current `linearize_physics` runs a scalar CPU loop over cell values
+- Enzyme device-side AD (kernel-level) needed for GPU Newton
+- Requires Humberto's input on kernel AD API before implementing
+
+### Non-Orthogonal Correction for Biharmonic
+- Current Biharmonic scheme is orthogonal-mesh only
+- Non-orthogonal correction requires the cross-diffusion term at ∇² level before applying Δ²
+
+### Poroelasticity Example
+- `examples/poroelastic/biot_consolidation_1d.jl`: Terzaghi 1-D consolidation with fixed-stress split ✓
+- Elastic block: `MonolithicSystem([u_eqn, v_eqn])` + GradDiv (same as linear_elastic_2d)
+- Flow block: `Time{Euler}(Sε) - Laplacian{Linear}(k) == Source(div_u_src)` via PDEOperator DSL
+- Live-reference sources: `Source(p_grad_x)` / `Source(div_u_src)` update without equation rebuild
+- Monolithic 3-field Biot complete: `biot_consolidation_monolithic.jl` — uses `ScalarGrad{T,I}` and `VectorDiv{T,J}` coupling operators
+
+### SciML / Lux Integration
+- Lux.jl preferred over Flux.jl for Enzyme compatibility
+- Targeted use: learned preconditioners, neural constitutive models, surrogate BCs
+- Fully differentiable simulation pipeline (sensitivity analysis, topology optimisation)
+
+### JFNK (Jacobian-Free Newton-Krylov)
+- `jvp!(y, L, u, v, config)` — Jacobian-vector product via `explicit_residual!` + finite difference
+- Enables Newton with no matrix assembly; purely matrix-free inner Krylov iterations
+- Foundation (`explicit_residual!`) is in place; only the JVP wrapper remains
+
+### Upstream PR Candidates
+- `Robin` + `NonLinearRobin` BCs (ready, no API dependency)
+- Rotational periodic BC (ready, surgical change)
+- `Biharmonic` operator (wait for non-orthogonal correction)
+- `OperatorTemplate` / `PDEOperator` abstraction (wait for Humberto's API review)

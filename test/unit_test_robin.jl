@@ -74,10 +74,10 @@ T_eqn_dirichlet = (
 
 # Discretise and apply BCs
 discretise!(T_eqn_robin, T_robin, config_robin)
-apply_boundary_conditions!(T_eqn_robin, config_robin.boundaries.T, nothing, 0.0, config_robin)
+apply_boundary_conditions!(T_eqn_robin, config_robin; time=0.0)
 
 discretise!(T_eqn_dirichlet, T_dirichlet, config_dirichlet)
-apply_boundary_conditions!(T_eqn_dirichlet, config_dirichlet.boundaries.T, nothing, 0.0, config_dirichlet)
+apply_boundary_conditions!(T_eqn_dirichlet, config_dirichlet; time=0.0)
 
 # Compare matrices and RHS
 @test T_eqn_robin.equation.A.parent ≈ T_eqn_dirichlet.equation.A.parent
@@ -115,7 +115,7 @@ T_eqn_mixed = (
 ) → ScalarEquation(T_robin, config_mixed.boundaries.T)
 
 discretise!(T_eqn_mixed, T_robin, config_mixed)
-apply_boundary_conditions!(T_eqn_mixed, config_mixed.boundaries.T, nothing, 0.0, config_mixed)
+apply_boundary_conditions!(T_eqn_mixed, config_mixed; time=0.0)
 
 # Check cell 1 (left bottom)
 # Neighbors: 2 (right), 4 (top)

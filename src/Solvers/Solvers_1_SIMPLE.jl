@@ -85,7 +85,9 @@ function setup_incompressible_solvers(
     @info "Pre-allocating solvers..."
 
     @reset U_eqn.solver = _workspace(solvers.U.solver, _b(U_eqn, XDir()))
+    @reset U_eqn.setup = solvers.U
     @reset p_eqn.solver = _workspace(solvers.p.solver, _b(p_eqn))
+    @reset p_eqn.setup = solvers.p
 
     @info "Initialising turbulence model..."
     turbulenceModel, config = initialise(model.turbulence, model, mdotf, p_eqn, config)
@@ -164,7 +166,7 @@ function SIMPLE(
     for iteration ∈ 1:iterations
         time = iteration
 
-        rx, ry, rz = solve_equation!(U_eqn, U, boundaries.U, solvers.U, xdir, ydir, zdir, config)
+        rx, ry, rz = solve_equation!(U_eqn, config)
         
         # Pressure correction
         inverse_diagonal!(rD, U_eqn, config)
@@ -186,7 +188,7 @@ function SIMPLE(
         
         # Pressure calculations
         @. prev = p.values
-        rp = solve_equation!(p_eqn, p, boundaries.p, solvers.p, config; ref=pref)
+        rp = solve_equation!(p_eqn, config; ref=pref)
         explicit_relaxation!(p, prev, solvers.p.relax, config)
         
         grad!(∇p, pf, p, boundaries.p, time, config) 
@@ -196,7 +198,7 @@ function SIMPLE(
         for i ∈ 1:ncorrectors
             # @. prev = p.values
             discretise!(p_eqn, p, config)       
-            apply_boundary_conditions!(p_eqn, boundaries.p, nothing, time, config)
+            apply_boundary_conditions!(p_eqn, config; time=time)
             # setReference!(p_eqn, pref, 1, config)
             nonorthogonal_face_correction(p_eqn, ∇p, rDf, config)
             # update_preconditioner!(p_eqn.preconditioner, p.mesh, config)

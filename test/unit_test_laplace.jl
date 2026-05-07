@@ -48,11 +48,12 @@ solvers = (
         relax       = 0.8,
         rtol = 1e-4,
         atol = 1e-5
-    )
+    ),
 )
 
 schemes = (
-    T = Schemes(laplacian = Linear)
+    T = Schemes(laplacian = Linear),
+    time = SteadyState
 )
 
 iterations=10
@@ -71,8 +72,8 @@ initialise!(model.energy.T, 15)
 
  @info "Defining models..."
     T_eqn = (
-        Time{schemes.time}(model.solid.rhocp, model.energy.T) #0.0 by default
-        - Laplacian{schemes.laplacian}(model.solid.rDf, model.energy.T)
+        Time{schemes.T.time}(model.solid.rhocp, model.energy.T) #0.0 by default
+        - Laplacian{schemes.T.laplacian}(model.solid.rDf, model.energy.T)
         ==
         - Source(source_field)
     ) → ScalarEquation(model.energy.T, config.boundaries.T)
@@ -80,11 +81,12 @@ initialise!(model.energy.T, 15)
 
 @info "Initialising preconditioners..."
 
-@reset T_eqn.preconditioner = set_preconditioner(solvers.preconditioner, T_eqn)
+@reset T_eqn.preconditioner = set_preconditioner(solvers.T.preconditioner, T_eqn)
 
 @info "Pre-allocating solvers..."
 
-@reset T_eqn.solver = _workspace(solvers.solver, _b(T_eqn))
+@reset T_eqn.solver = _workspace(solvers.T.solver, _b(T_eqn))
+@reset T_eqn.setup = solvers.T
 
 
 # The part that was previously inside the solver

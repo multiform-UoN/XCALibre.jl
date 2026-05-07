@@ -1,9 +1,11 @@
 export SolverSetup, Runtime, Schemes
 export explicit_relaxation!, implicit_relaxation!, implicit_relaxation_diagdom!, setReference!
 export solve_system!
-export solve_equation!
-export residual!
+export solve_equation!, solve_preassembled!
+export residual, residual!, residual_norm, solve_residual
 export AdaptiveTimeStepping
+
+import XCALibre.ModelFramework: →, PDEOperator
 
 struct SolverSetup{
     F<:AbstractFloat,
@@ -22,6 +24,14 @@ struct SolverSetup{
     atol::F
     rtol::F
 end
+
+const BoundaryCollection = Union{Tuple{Vararg{<:AbstractBoundary}}, AbstractVector{<:AbstractBoundary}}
+
+(→)(L::PDEOperator, BCs::BoundaryCollection) = PDEOperator(L.templates, L.sources, BCs, L.setup)
+(→)(L::PDEOperator, setup::SolverSetup) = PDEOperator(L.templates, L.sources, L.BCs, setup)
+(→)(L::PDEOperator, x) = throw(ArgumentError(
+    "PDEOperator can only be chained with boundary conditions or SolverSetup; got $(typeof(x))."
+))
 
 """
     SolverSetup(; 
@@ -212,10 +222,53 @@ end
 
 
 function solve_equation!(
+    eqn::ModelEquation{T,M,E,S,P}, config; time=nothing, ref=nothing, irelax=nothing
+    ) where {T<:ScalarModel,M,E,S,P}
+
+    phi = get_phi(eqn)
+    setup = eqn.setup
+    discretise!(eqn, phi, config)
+    apply_boundary_conditions!(eqn, config; time=time)
+    if length(eqn.model.terms) == 1 && typeof(eqn.model.terms[1]) <: Laplacian
+        make_symmetric!(eqn, config) # added this to test stability of periodic boundaries
+    end
+    setReference!(eqn, ref, 1, config)
+    if !isnothing(irelax)
+        implicit_relaxation!(eqn, phi.values, irelax, nothing, config)
+        # implicit_relaxation_diagdom!(eqn, phi.values, irelax, nothing, config)
+    end
+    if !isnothing(eqn.preconditioner)
+        update_preconditioner!(eqn.preconditioner, phi.mesh, config)
+    end
+    res = solve_system!(eqn, setup, phi, nothing, config)
+    return res
+end
+
+"""
+    solve_preassembled!(eqn, config; time=nothing)
+
+Apply boundary conditions and solve a scalar equation whose matrix and RHS have already
+been assembled (e.g. via `assemble_matrix!` / `assemble_rhs!`).  Unlike `solve_equation!`
+this does **not** call `discretise!`, so any manual modifications to `_b(eqn)` made after
+assembly are preserved.  Used for Crank–Nicolson and other split-step schemes.
+"""
+function solve_preassembled!(
+    eqn::ModelEquation{T,M,E,S,P}, config; time=nothing
+    ) where {T<:ScalarModel,M,E,S,P}
+    phi   = get_phi(eqn)
+    setup = eqn.setup
+    apply_boundary_conditions!(eqn, config; time=time)
+    if !isnothing(eqn.preconditioner)
+        update_preconditioner!(eqn.preconditioner, phi.mesh, config)
+    end
+    return solve_system!(eqn, setup, phi, nothing, config)
+end
+
+function solve_equation!(
     eqn::ModelEquation{T,M,E,S,P}, phi, phiBCs, solversetup, config; time=nothing, ref=nothing, irelax=nothing
     ) where {T<:ScalarModel,M,E,S,P}
 
-    discretise!(eqn, phi, config)       
+    discretise!(eqn, phi, config)
     apply_boundary_conditions!(eqn, phiBCs, nothing, time, config)
     if length(eqn.model.terms) == 1 && typeof(eqn.model.terms[1]) <: Laplacian
         make_symmetric!(eqn, config) # added this to test stability of periodic boundaries
@@ -230,6 +283,42 @@ function solve_equation!(
     end
     res = solve_system!(eqn, solversetup, phi, nothing, config)
     return res
+end
+
+function solve_equation!(
+    psiEqn::ModelEquation{T,M,E,S,P}, config; time=nothing
+    ) where {T<:VectorModel,M,E,S,P}
+
+    psi = get_phi(psiEqn)
+    mesh = psi.mesh
+    solversetup = psiEqn.setup
+
+    discretise!(psiEqn, psi, config)
+    update_equation!(psiEqn, config)
+
+    apply_boundary_conditions!(psiEqn, config; time=time, component=XDir())
+    implicit_relaxation_diagdom!(psiEqn, psi.x.values, solversetup.relax, XDir(), config)
+    update_preconditioner!(psiEqn.preconditioner, mesh, config)
+    resx = solve_system!(psiEqn, solversetup, psi.x, XDir(), config)
+
+    update_equation!(psiEqn, config)
+
+    apply_boundary_conditions!(psiEqn, config; time=time, component=YDir())
+    implicit_relaxation_diagdom!(psiEqn, psi.y.values, solversetup.relax, YDir(), config)
+    update_preconditioner!(psiEqn.preconditioner, mesh, config)
+    resy = solve_system!(psiEqn, solversetup, psi.y, YDir(), config)
+
+    # Z velocity calculations (3D Mesh only)
+    resz = zero(_get_float(mesh))
+    if typeof(mesh) <: Mesh3
+        update_equation!(psiEqn, config)
+        apply_boundary_conditions!(psiEqn, config; time=time, component=ZDir())
+        implicit_relaxation_diagdom!(psiEqn, psi.z.values, solversetup.relax, ZDir(), config)
+        update_preconditioner!(psiEqn.preconditioner, mesh, config)
+        resz = solve_system!(psiEqn, solversetup, psi.z, ZDir(), config)
+    end
+
+    return resx, resy, resz
 end
 
 function solve_equation!(
@@ -292,7 +381,7 @@ function solve_system!(phiEqn::ModelEquation, setup, result, component, config)
         kernel! = _copy!(_setup(config.hardware.backend, config.hardware.workgroup, ndrange)...)
         kernel!(result.values, S.x)
         
-        return residual(phiEqn, component, config)
+        return solve_residual(phiEqn, component, config)
     end
 
     (; itmax, atol, rtol) = setup
@@ -330,7 +419,7 @@ function solve_system!(phiEqn::ModelEquation, setup, result, component, config)
     Krylov.iteration_count(solver) == itmax && @warn "Maximum number of iterations reached!"
 
     # println(statistics(solver).niter)
-    res = residual(phiEqn, component, config)
+    res = solve_residual(phiEqn, component, config)
     return res
 end
 
@@ -466,7 +555,59 @@ end
     end
 end
 
-function residual(eqn, component, config)
+function _residual_equation(eqn; susp=false, ad_backend=:forwarddiff)
+    has_nonlinear = any(eqn.model.terms) do t
+        t isa NonlinearOperator ||
+        (hasproperty(t, :type) && t.type isa NonLinearSi)
+    end
+    has_nonlinear || return eqn
+    _, lin_eqn = linearize_physics(get_bcs(eqn), eqn; susp=susp, ad_backend=ad_backend)
+    return lin_eqn
+end
+
+function residual!(
+    r, eqn::ModelEquation{T,M,E,S,P}, config; component=nothing, time=nothing,
+    assemble=true, susp=false, ad_backend=:forwarddiff
+    ) where {T<:ScalarModel,M,E,S,P}
+    eqn = _residual_equation(eqn; susp=susp, ad_backend=ad_backend)
+    phi = get_phi(eqn)
+    if assemble
+        discretise!(eqn, phi, config)
+        apply_boundary_conditions!(eqn, config; time=time, component=component)
+    end
+    A = _A(eqn)
+    b = _b(eqn, component)
+    values = get_values(phi, component)
+    r .= A * values
+    r .-= b
+    return r
+end
+
+function residual!(r, eqn::ModelEquation{T,M,E,S,P}, config; kwargs...) where {T<:VectorModel,M,E,S,P}
+    error("Mathematical residual vectors for VectorModel equations require an explicit component implementation. Use scalar components or solve_residual for solve-monitor norms for now.")
+end
+
+function residual(
+    eqn::ModelEquation{T,M,E,S,P}, config; component=nothing, time=nothing,
+    assemble=true, susp=false, ad_backend=:forwarddiff
+) where {T<:ScalarModel,M,E,S,P}
+    r = similar(_b(eqn, component))
+    residual!(
+        r, eqn, config;
+        component=component, time=time, assemble=assemble, susp=susp, ad_backend=ad_backend,
+    )
+end
+
+function residual(L::PDEOperator, phi::ScalarField, config; kwargs...)
+    residual(L(phi), config; kwargs...)
+end
+
+residual_norm(r::AbstractArray) = norm(r)
+residual_norm(eqn::ModelEquation, config; kwargs...) = residual_norm(residual(eqn, config; kwargs...))
+residual_norm(L::PDEOperator, phi::ScalarField, config; kwargs...) =
+    residual_norm(residual(L, phi, config; kwargs...))
+
+function solve_residual(eqn, component, config)
     (; A, R, Fx) = eqn.equation
     b = _b(eqn, component)
     values = get_values(get_phi(eqn), component)

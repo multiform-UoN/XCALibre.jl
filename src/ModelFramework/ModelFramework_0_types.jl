@@ -1,9 +1,10 @@
 export AbstractOperator, AbstractSource, AbstractEquation
-export Operator, Source, Src
+export Operator, OperatorTemplate, ScaledFlux, Source, Src
 export Time, Laplacian, Divergence, Si, NonLinearSi
-export NonlinearMap, NonlinearOperator, AffineOperator
+export NonlinearMap, NonlinearOperator, NonlinearOperatorTemplate, AffineOperator
 export Biharmonic
 export GradDiv
+export ScalarGrad, VectorDiv
 export MonolithicSystem
 export Model, ScalarEquation, VectorEquation, ModelEquation, ScalarModel, VectorModel
 export nzval_index
@@ -23,11 +24,34 @@ abstract type AbstractEquation end
 
 struct Operator{F,P,S,T} <: AbstractOperator
     flux::F
-    phi::P 
+    phi::P
     sign::S
     type::T
 end
 Adapt.@adapt_structure Operator
+
+# Operator Template (no field bound)
+struct OperatorTemplate{F,S,T} <: AbstractOperator
+    flux::F
+    sign::S
+    type::T
+end
+Adapt.@adapt_structure OperatorTemplate
+
+# Binding: apply template to a field → current Operator
+function (t::OperatorTemplate)(phi)
+    flux = t.flux === nothing ? ConstantScalar(one(_get_int(phi.mesh))) : t.flux
+    Operator(flux, phi, t.sign, t.type)
+end
+
+# Scaled flux wrapper — allows PDEOperator * scalar without touching scheme! signatures
+struct ScaledFlux{F, V<:Number}
+    flux::F
+    scale::V
+end
+Base.getindex(sf::ScaledFlux, i) = sf.flux[i] * sf.scale
+Base.length(sf::ScaledFlux) = length(sf.flux)
+Adapt.@adapt_structure ScaledFlux
 
 # operators
 
@@ -53,22 +77,26 @@ end
 
 # constructors
 
+Time{T}(flux) where T = OperatorTemplate(flux, 1, Time{T}())
 Time{T}(flux, phi) where T = Operator(
     flux, phi, 1, Time{T}()
     )
 
-Time{T}(phi) where T = Operator(
+Time{T}(phi::AbstractField) where T = Operator(
     ConstantScalar(one(_get_int(phi.mesh))), phi, 1, Time{T}()
     )
 
+Laplacian{T}(flux) where T = OperatorTemplate(flux, 1, Laplacian{T}())
 Laplacian{T}(flux, phi) where T = Operator(
     flux, phi, 1, Laplacian{T}()
     )
 
+Divergence{T}(flux) where T = OperatorTemplate(flux, 1, Divergence{T}())
 Divergence{T}(flux, phi) where T = Operator(
     flux, phi, 1, Divergence{T}()
     )
 
+Si(flux) = OperatorTemplate(flux, 1, Si())
 Si(flux, phi) = Operator(
     flux, phi, 1, Si()
 )
@@ -93,6 +121,14 @@ struct NonlinearOperator{O<:Operator, Fn} <: AbstractOperator
 end
 Adapt.@adapt_structure NonlinearOperator
 
+struct NonlinearOperatorTemplate{O<:OperatorTemplate, Fn} <: AbstractOperator
+    op::O
+    map::Fn
+end
+Adapt.@adapt_structure NonlinearOperatorTemplate
+
+@inline (t::NonlinearOperatorTemplate)(phi) = NonlinearOperator(t.op(phi), t.map)
+
 struct AffineOperator{O<:Operator, J, C, R, Fn} <: AbstractOperator
     op::O
     jacobian::J
@@ -116,6 +152,9 @@ function Adapt.adapt_structure(to, itp::Biharmonic{T}) where {T}
     Biharmonic{T}()
 end
 
+Biharmonic{T}(flux) where T = OperatorTemplate(
+    flux, 1, Biharmonic{T}()
+)
 Biharmonic{T}(flux, phi) where T = Operator(
     flux, phi, 1, Biharmonic{T}()
 )
@@ -142,7 +181,50 @@ function Adapt.adapt_structure(to, itp::GradDiv{T,I,J}) where {T,I,J}
     GradDiv{T,I,J}()
 end
 
+GradDiv{T,I,J}(flux) where {T,I,J} = OperatorTemplate(flux, 1, GradDiv{T,I,J}())
 GradDiv{T,I,J}(flux, phi) where {T,I,J} = Operator(flux, phi, 1, GradDiv{T,I,J}())
+
+# ---------------------------------------------------------------------------
+# ScalarGrad{T, I}
+#
+# Two-point FVM approximation of the I-th component of the gradient of a
+# scalar field φ: contributes ∂φ/∂x_I to any equation row.
+#
+# Face coefficient = flux[fID] * face.e[I] * face.area / face.delta
+#
+# Typical use: pressure-gradient body force in momentum equations,
+# chemical-potential gradient in phase-field, etc.
+# In a MonolithicSystem, `phi` determines which column block is assembled.
+# ---------------------------------------------------------------------------
+struct ScalarGrad{T,I} end
+function Adapt.adapt_structure(to, itp::ScalarGrad{T,I}) where {T,I}
+    ScalarGrad{T,I}()
+end
+
+ScalarGrad{T,I}(flux) where {T,I} = OperatorTemplate(flux, 1, ScalarGrad{T,I}())
+ScalarGrad{T,I}(flux, phi) where {T,I} = Operator(flux, phi, 1, ScalarGrad{T,I}())
+
+# ---------------------------------------------------------------------------
+# VectorDiv{T, J}
+#
+# Two-point FVM approximation of the J-th partial derivative ∂u_J/∂x_J,
+# one component of the divergence of a vector field (u₁, u₂, …).
+# Contributes ∂u_J/∂x_J to any scalar equation row.
+#
+# Face coefficient = flux[fID] * face.e[J] * face.area / face.delta
+#
+# Typical use: ∇·u in continuity / pressure equations, incompressibility
+# constraints, Biot volumetric strain coupling, etc.
+# Sum VectorDiv{T,J} over J = 1…d to obtain the full divergence ∇·u.
+# In a MonolithicSystem, `phi` (= u_J) determines which column block is used.
+# ---------------------------------------------------------------------------
+struct VectorDiv{T,J} end
+function Adapt.adapt_structure(to, itp::VectorDiv{T,J}) where {T,J}
+    VectorDiv{T,J}()
+end
+
+VectorDiv{T,J}(flux) where {T,J} = OperatorTemplate(flux, 1, VectorDiv{T,J}())
+VectorDiv{T,J}(flux, phi) where {T,J} = Operator(flux, phi, 1, VectorDiv{T,J}())
 
 
 # SOURCES
@@ -159,6 +241,7 @@ Adapt.@adapt_structure Src
 
 struct Source end
 Adapt.@adapt_structure Source
+Source(f::Number) = Src(ConstantScalar(f), 1)
 Source(f::T) where T = Src(f, 1)
 
 # MODEL TYPE
@@ -185,12 +268,13 @@ _build_A(backend::CPU, i, j, v, n) = SparseXCSR(sparsecsr(i, j, v, n, n))
 _build_opA(A::SparseXCSR) = A
 
 ## ORIGINAL STRUCTURE PARAMETERISED FOR GPU
-struct ScalarEquation{VTf<:AbstractVector, ASA<:AbstractSparseArray, OP} <: AbstractEquation
+struct ScalarEquation{VTf<:AbstractVector, ASA<:AbstractSparseArray, OP, B} <: AbstractEquation
     A::ASA
     opA::OP
     b::VTf
     R::VTf
     Fx::VTf
+    BCs::B
 end
 Adapt.@adapt_structure ScalarEquation
 
@@ -231,11 +315,12 @@ ScalarEquation(phi::ScalarField, BCs; extended=false) = begin
         _build_opA(A),
         KernelAbstractions.zeros(backend, Tf, nCells),
         KernelAbstractions.zeros(backend, Tf, nCells),
-        KernelAbstractions.zeros(backend, Tf, nCells)
+        KernelAbstractions.zeros(backend, Tf, nCells),
+        BCs
         )
 end
 
-struct VectorEquation{VTf<:AbstractVector, ASA<:AbstractSparseArray, OP} <: AbstractEquation
+struct VectorEquation{VTf<:AbstractVector, ASA<:AbstractSparseArray, OP, B} <: AbstractEquation
     A0::ASA
     A::ASA
     opA::OP
@@ -244,6 +329,7 @@ struct VectorEquation{VTf<:AbstractVector, ASA<:AbstractSparseArray, OP} <: Abst
     bz::VTf
     R::VTf
     Fx::VTf
+    BCs::B
 end
 Adapt.@adapt_structure VectorEquation
 
@@ -283,7 +369,8 @@ VectorEquation(psi::VectorField, BCs) = begin
         KernelAbstractions.zeros(backend, Tf, nCells),
         KernelAbstractions.zeros(backend, Tf, nCells),
         KernelAbstractions.zeros(backend, Tf, nCells),
-        KernelAbstractions.zeros(backend, Tf, nCells)
+        KernelAbstractions.zeros(backend, Tf, nCells),
+        BCs
         )
 end
 
@@ -345,22 +432,59 @@ function spindex_csc(colptr::AbstractArray{T}, rowval, i, j) where T
     return ind
 end
 
-# Model equation type 
+struct PDEOperator{TL<:Tuple, TS<:Tuple, TB, SS}
+    templates::TL     # Tuple of OperatorTemplate
+    sources::TS       # Tuple of Src
+    BCs::TB           # boundary conditions — makes this a complete BVP operator
+    setup::SS         # solver settings
+end
+
+# Default constructor for empty BCs and setup
+PDEOperator(templates, sources, BCs) = PDEOperator(templates, sources, BCs, nothing)
+
+@inline _bind_template(t, phi) = t(phi)
+# Pre-bound Operator (cross-field coupling): phi is already set — ignore bind-time phi
+@inline _bind_template(t::Operator, phi) = t
+@inline _bind_templates(::Tuple{}, phi) = ()
+@inline _bind_templates(templates::Tuple, phi) =
+    (_bind_template(first(templates), phi), _bind_templates(Base.tail(templates), phi)...)
+
+# Applying PDEOperator to a field produces a ModelEquation (complete BVP)
+function (L::PDEOperator)(phi::ScalarField)
+    terms = _bind_templates(L.templates, phi)
+    model = Model{length(L.templates), length(L.sources)}(
+        terms,
+        L.sources
+    )
+    # Note: L.BCs might be empty/nothing here if not yet set
+    ModelEquation(ScalarModel(), model, ScalarEquation(phi, L.BCs), nothing, nothing, L.setup)
+end
+
+function (L::PDEOperator)(phi::VectorField)
+    terms = _bind_templates(L.templates, phi)
+    model = Model{length(L.templates), length(L.sources)}(
+        terms,
+        L.sources
+    )
+    ModelEquation(VectorModel(), model, VectorEquation(phi, L.BCs), nothing, nothing, L.setup)
+end
+
+# Model equation type
 struct ScalarModel end
 Adapt.@adapt_structure ScalarModel
 
 struct VectorModel end
 Adapt.@adapt_structure VectorModel
 
-struct ModelEquation{T,M,E,S,P}
+struct ModelEquation{T,M,E,S,P,ST}
     type::T
     model::M
     equation::E
     solver::S
     preconditioner::P
+    setup::ST
 end
 Adapt.@adapt_structure ModelEquation
-
 # Monolithic (block-coupled) system container
 struct MonolithicSystem{E<:Vector{<:ModelEquation}, F}
     equations::E

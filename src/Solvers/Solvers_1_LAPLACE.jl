@@ -80,6 +80,7 @@ function setup_laplace_solver(
     @info "Pre-allocating solvers..."
 
     @reset T_eqn.solver = _workspace(solvers.solver, _b(T_eqn))
+    @reset T_eqn.setup = solvers
 
     @info "Initialising energy model..."
     energyModel = initialise(model.energy, model, T, rDf, rhocp, k, kf, cp, rho, config)
@@ -135,7 +136,7 @@ function LAPLACE(
     @time for iteration ∈ 1:iterations
         time = iteration *dt
 
-        rt = solve_equation!(T_eqn, T, boundaries.T, solvers, config; time=time)
+        rt = solve_equation!(T_eqn, config; time=time)
         
         if typeof(model.solid) <: NonUniform
             energy!(model.energy, model, T, rDf, rhocp, k, kf, cp, rho, config)
@@ -143,7 +144,7 @@ function LAPLACE(
 
         R_T[iteration] = rt
 
-        if (R_T[iteration] <= solvers.convergence) && (typeof(model.time) <: Steady)
+        if (R_T[iteration] <= T_eqn.setup.convergence) && (typeof(model.time) <: Steady)
             progress.n = iteration
             finish!(progress)
             @info "Simulation converged in $iteration iterations!"
