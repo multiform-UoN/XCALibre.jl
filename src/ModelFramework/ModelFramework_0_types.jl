@@ -3,6 +3,7 @@ export Operator, Source, Src
 export Time, Laplacian, Divergence, Si, NonLinearSi
 export NonlinearMap, NonlinearOperator, AffineOperator
 export Biharmonic
+export GradDiv
 export MonolithicSystem
 export Model, ScalarEquation, VectorEquation, ModelEquation, ScalarModel, VectorModel
 export nzval_index
@@ -118,6 +119,30 @@ end
 Biharmonic{T}(flux, phi) where T = Operator(
     flux, phi, 1, Biharmonic{T}()
 )
+
+# ---------------------------------------------------------------------------
+# GradDiv{T, I_ROW, J_COL}
+#
+# Implicit volumetric-coupling operator for linear elasticity.
+# Discretises the (I_ROW, J_COL) block of the term (μ+λ) ∇(∇·U):
+#
+#   face coefficient = flux[fID] * e[J_COL] * Sf[I_ROW] / delta
+#
+# where flux stores the scalar (μ+λ) at each face, e is the unit cell-to-cell
+# vector and Sf = area * normal is the signed face area vector.
+#
+# Use together with Laplacian{Linear}(mu, U_i) in a monolithic system so that
+# the full Cauchy-stress stiffness is assembled block-coupled:
+#
+#   Laplacian(mu, U_i)     → diagonal block (i,i), non-orthogonal corrected
+#   GradDiv{T,i,j}(α, U_j) → block (i,j), two-point (α = mu + lambda)
+# ---------------------------------------------------------------------------
+struct GradDiv{T,I,J} end
+function Adapt.adapt_structure(to, itp::GradDiv{T,I,J}) where {T,I,J}
+    GradDiv{T,I,J}()
+end
+
+GradDiv{T,I,J}(flux, phi) where {T,I,J} = Operator(flux, phi, 1, GradDiv{T,I,J}())
 
 
 # SOURCES

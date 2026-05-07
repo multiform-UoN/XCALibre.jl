@@ -237,6 +237,23 @@ end
     0.0, 0.0
 end
 
+# GRADDIV — two-point elastic coupling operator
+# Returns face coefficient α_f * e[J] * (A*n)[I] / delta for the (I,J) block.
+# Note: ns² = 1, so the coefficient is independent of which side we assemble from.
+@inline function scheme!(
+    term::Operator{F,P,I,GradDiv{T,I_ROW,J_COL}},
+    nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
+) where {F,P,I,T,I_ROW,J_COL}
+    e_J  = face.e[J_COL]
+    n_I  = face.normal[I_ROW]
+    ap   = term.sign * term.flux[fID] * e_J * face.area * n_I / face.delta
+    return -ap, ap
+end
+
+@inline scheme_source!(
+    term::Operator{F,P,I,GradDiv{T,I_ROW,J_COL}}, cell, cID, cIndex, prev, runtime
+) where {F,P,I,T,I_ROW,J_COL} = (0.0, 0.0)
+
 # IMPLICIT SOURCE
 @inline function scheme!(
     term::Operator{F,P,I,Si}, 

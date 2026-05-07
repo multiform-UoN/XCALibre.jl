@@ -63,6 +63,7 @@ include("boundary_conditions/robin_interpolation.jl")
 include("boundary_conditions/nonlinear_robin.jl")
 include("boundary_conditions/high_order.jl")
 include("boundary_conditions/affine.jl")
+include("boundary_conditions/graddiv.jl")
 
 include("Discretise_6_monolithic.jl")
 
