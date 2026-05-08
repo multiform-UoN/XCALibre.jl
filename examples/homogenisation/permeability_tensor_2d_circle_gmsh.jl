@@ -21,18 +21,18 @@
 #
 # NUMERICAL IMPLEMENTATION:
 # 1. Gmsh is used to generate a conformant periodic mesh (opposite faces match).
-# 2. XCALibre's `construct_periodic` pairs these matched faces to create the
-#    periodic connectivity in the sparse matrix.
-# 3. The new `PDEOperator` paradigm is used to define the Stokes system abstractly.
+# 2. XCALibre's `Gmsh2D_mesh` directly converts the Gmsh API data into Mesh2 format.
+# 3. `construct_periodic` pairs matched faces to create periodic connectivity.
+# 4. The new `PDEOperator` paradigm is used to define the Stokes system abstractly.
 # ==============================================================================
 
 using XCALibre
+using XCALibre.UNV2
 using LinearAlgebra
 using KernelAbstractions
 using Printf
-import gmsh
-
-# ... (rest of the file)
+using Gmsh
+using Accessors
 
 # ── Parameters ────────────────────────────────────────────────────────────────
 const L         = 1.0     # half-cell side (cell is [-L, L]², side = 2L)
@@ -42,18 +42,15 @@ const ν         = 1.0     # kinematic viscosity
 
 # ── Gmsh mesh generation ─────────────────────────────────────────────────────
 """
-    build_2d_unit_cell(L, R, h) → mesh_file
+    build_2d_unit_cell(L, R, h) → mesh
 
 Generate a periodic triangle mesh on [-L,L]² minus a circle of radius R.
-Gmsh `setPeriodic` ensures opposite boundary curves share a conformant mesh
-(same node layout, shifted by 2L), so `construct_periodic` in XCALibre can
-pair faces exactly.
+Uses Gmsh API and converts directly to XCALibre Mesh2 format.
 """
 function build_2d_unit_cell(L, R, h)
     gmsh.initialize()
     gmsh.model.add("unit_cell_2d")
     gmsh.option.setNumber("General.Terminal", 0)
-    gmsh.option.setNumber("Mesh.SaveAll", 1)   # write cells even without a 2D Physical Group
 
     # ── Outer square ─────────────────────────────────────────────────────────
     p1 = gmsh.model.geo.addPoint(-L, -L, 0, h)
@@ -102,10 +99,10 @@ function build_2d_unit_cell(L, R, h)
 
     gmsh.model.mesh.generate(2)
 
-    mesh_file = tempname() * ".unv"
-    gmsh.write(mesh_file)
+    # ── Direct conversion ────────────────────────────────────────────────────
+    mesh = Gmsh2D_mesh()
     gmsh.finalize()
-    return mesh_file
+    return mesh
 end
 
 # ── Stokes cell-problem solver ────────────────────────────────────────────────
@@ -128,17 +125,21 @@ function solve_cell_problem(model, config, e_j; pref=0.0)
     macro_grad = VectorField(mesh)
     initialise!(macro_grad, e_j)
 
-    U_eqn = (
-        Time{schemes.U.time}(U)
-        + Divergence{schemes.U.divergence}(mdotf, U)
-        - Laplacian{schemes.U.laplacian}(nueff, U)
+    # Use the new PDEOperator paradigm
+    L_U = ((
+          Time{schemes.U.time}()
+        + Divergence{schemes.U.divergence}(mdotf)
+        - Laplacian{schemes.U.laplacian}(nueff)
         ==
         - Source(∇p.result) + Source(macro_grad)
-    ) → VectorEquation(U, boundaries.U)
+    ) → boundaries.U) → solvers.U
 
-    p_eqn = (
-        - Laplacian{schemes.p.laplacian}(rDf, p) == - Source(divHv)
-    ) → ScalarEquation(p, boundaries.p)
+    L_p = ((
+        - Laplacian{schemes.p.laplacian}(rDf) == - Source(divHv)
+    ) → boundaries.p) → solvers.p
+
+    U_eqn = L_U(U)
+    p_eqn = L_p(p)
 
     @reset U_eqn.preconditioner = set_preconditioner(solvers.U.preconditioner, U_eqn)
     @reset p_eqn.preconditioner = set_preconditioner(solvers.p.preconditioner, p_eqn)
@@ -166,7 +167,7 @@ function solve_cell_problem(model, config, e_j; pref=0.0)
     xdir, ydir, zdir = XDir(), YDir(), ZDir()
 
     for iter in 1:runtime.iterations
-        rx, ry, rz = solve_equation!(U_eqn, U, boundaries.U, solvers.U, xdir, ydir, zdir, config)
+        rx, ry, rz = solve_equation!(U_eqn, config)
         inverse_diagonal!(rD, U_eqn, config)
         interpolate!(rDf, rD, config)
         remove_pressure_source!(U_eqn, ∇p, config)
@@ -176,7 +177,7 @@ function solve_cell_problem(model, config, e_j; pref=0.0)
         flux!(mdotf, Uf, config)
         XCALibre.div!(divHv, mdotf, config)
         prev .= p.values
-        rp = solve_equation!(p_eqn, p, boundaries.p, solvers.p, config; ref=pref)
+        rp = solve_equation!(p_eqn, config; ref=pref)
         explicit_relaxation!(p, prev, solvers.p.relax, config)
         grad!(∇p, pf, p, boundaries.p, time, config)
         XCALibre.Solvers.correct_mass_flux!(mdotf, p_eqn, config)
@@ -196,9 +197,8 @@ end
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 @info "Building Gmsh unit cell mesh  (L=$L, R=$R, h=$mesh_size)..."
-mesh_file = build_2d_unit_cell(L, R, mesh_size)
-mesh      = UNV2D_mesh(mesh_file)
-@info "Mesh loaded: $(length(mesh.cells)) cells"
+mesh = build_2d_unit_cell(L, R, mesh_size)
+@info "Mesh ready: $(length(mesh.cells)) cells"
 
 backend  = CPU(); workgroup = 1024; activate_multithread(backend)
 hardware = Hardware(backend=backend, workgroup=workgroup)
@@ -260,4 +260,4 @@ display(K)
 porosity = total_volume(mesh_dev) / (2L)^2
 @printf("Fluid porosity φ = %.4f\n", porosity)
 println("─────────────────────────────────────────────")
-@info "Done.  Compare with temp/PoreScaleHomogenisation.jl/homogenization_2d.jl"
+@info "Done."

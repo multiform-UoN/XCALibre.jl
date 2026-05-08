@@ -1,6 +1,6 @@
 export AbstractOperator, AbstractSource, AbstractEquation
-export Operator, OperatorTemplate, ScaledFlux, Source, Src
-export Time, Laplacian, Divergence, Si, NonLinearSi
+export Operator, OperatorTemplate, PDEOperator, ScaledFlux, Source, Src
+export Time, TimeTerm, Laplacian, Divergence, Si, NonLinearSi
 export NonlinearMap, NonlinearOperator, NonlinearOperatorTemplate, AffineOperator
 export Biharmonic
 export GradDiv
@@ -56,8 +56,9 @@ Adapt.@adapt_structure ScaledFlux
 # operators
 
 struct Time{T} end
-function Adapt.adapt_structure(to, itp::Time{T}) where {T}
-    Time{T}()
+struct TimeTerm{T} end
+function Adapt.adapt_structure(to, itp::TimeTerm{T}) where {T}
+    TimeTerm{T}()
 end
 
 struct Laplacian{T} end
@@ -77,13 +78,13 @@ end
 
 # constructors
 
-Time{T}(flux) where T = OperatorTemplate(flux, 1, Time{T}())
+Time{T}(flux) where T = OperatorTemplate(flux, 1, TimeTerm{T}())
 Time{T}(flux, phi) where T = Operator(
-    flux, phi, 1, Time{T}()
+    flux, phi, 1, TimeTerm{T}()
     )
 
 Time{T}(phi::AbstractField) where T = Operator(
-    ConstantScalar(one(_get_int(phi.mesh))), phi, 1, Time{T}()
+    ConstantScalar(one(_get_int(phi.mesh))), phi, 1, TimeTerm{T}()
     )
 
 Laplacian{T}(flux) where T = OperatorTemplate(flux, 1, Laplacian{T}())
@@ -441,33 +442,6 @@ end
 
 # Default constructor for empty BCs and setup
 PDEOperator(templates, sources, BCs) = PDEOperator(templates, sources, BCs, nothing)
-
-@inline _bind_template(t, phi) = t(phi)
-# Pre-bound Operator (cross-field coupling): phi is already set — ignore bind-time phi
-@inline _bind_template(t::Operator, phi) = t
-@inline _bind_templates(::Tuple{}, phi) = ()
-@inline _bind_templates(templates::Tuple, phi) =
-    (_bind_template(first(templates), phi), _bind_templates(Base.tail(templates), phi)...)
-
-# Applying PDEOperator to a field produces a ModelEquation (complete BVP)
-function (L::PDEOperator)(phi::ScalarField)
-    terms = _bind_templates(L.templates, phi)
-    model = Model{length(L.templates), length(L.sources)}(
-        terms,
-        L.sources
-    )
-    # Note: L.BCs might be empty/nothing here if not yet set
-    ModelEquation(ScalarModel(), model, ScalarEquation(phi, L.BCs), nothing, nothing, L.setup)
-end
-
-function (L::PDEOperator)(phi::VectorField)
-    terms = _bind_templates(L.templates, phi)
-    model = Model{length(L.templates), length(L.sources)}(
-        terms,
-        L.sources
-    )
-    ModelEquation(VectorModel(), model, VectorEquation(phi, L.BCs), nothing, nothing, L.setup)
-end
 
 # Model equation type
 struct ScalarModel end

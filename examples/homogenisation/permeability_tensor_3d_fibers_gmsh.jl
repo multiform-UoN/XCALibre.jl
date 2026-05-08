@@ -25,22 +25,24 @@
 # ==============================================================================
 
 using XCALibre
+using XCALibre.UNV3
 using LinearAlgebra
 using KernelAbstractions
 using Random
 using Printf
-import gmsh
+using Gmsh
+using Accessors
 
 # ... (rest of the file)
 
 # ── Parameters ────────────────────────────────────────────────────────────────
 const L             = 1.0     # half-cell side (cell is [-L, L]³, side = 2L)
-const N_fibers      = 8       # number of master fibers
+const N_fibers      = 1       # number of master fibers
 const R_min         = 0.05    # minimum fiber radius
 const R_max         = 0.12    # maximum fiber radius
 const fiber_length  = 4.0     # fiber length (should exceed 2L for continuity)
 const mesh_size     = 0.3     # characteristic element size
-const seed          = 42      # RNG seed
+const seed          = 44      # RNG seed
 const ν             = 1.0     # kinematic viscosity
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
@@ -177,9 +179,12 @@ function build_fiber_unit_cell(L, N_fibers, R_min, R_max, fiber_length, h; seed=
             end
         end
 
-        for name in ("left","right","bottom","top","front","back")
-            isempty(eval(Symbol(name * "_s"))) && error("No surfaces found for $name face.")
-        end
+        isempty(left_s) && error("No surfaces found for left face.")
+        isempty(right_s) && error("No surfaces found for right face.")
+        isempty(bottom_s) && error("No surfaces found for bottom face.")
+        isempty(top_s) && error("No surfaces found for top face.")
+        isempty(front_s) && error("No surfaces found for front face.")
+        isempty(back_s) && error("No surfaces found for back face.")
 
         # ── Pair fragmented periodic faces, then set periodic mesh ────────────
         Lc = 2L
@@ -211,10 +216,9 @@ function build_fiber_unit_cell(L, N_fibers, R_min, R_max, fiber_length, h; seed=
         gmsh.option.setNumber("Mesh.CharacteristicLengthMax", h)
         gmsh.model.mesh.generate(3)
 
-        mesh_file = tempname() * ".unv"
-        gmsh.write(mesh_file)
+        mesh = Gmsh3D_mesh()
         gmsh.finalize()
-        return mesh_file
+        return mesh
 
     catch err
         gmsh.finalize(); rethrow(err)
@@ -241,17 +245,20 @@ function solve_cell_problem_fibers(model, config, e_j; pref=0.0)
     macro_grad = VectorField(mesh)
     initialise!(macro_grad, e_j)
 
-    U_eqn = (
-        Time{schemes.U.time}(U)
-        + Divergence{schemes.U.divergence}(mdotf, U)
-        - Laplacian{schemes.U.laplacian}(nueff, U)
+    L_U = ((
+        Time{schemes.U.time}()
+        + Divergence{schemes.U.divergence}(mdotf)
+        - Laplacian{schemes.U.laplacian}(nueff)
         ==
         - Source(∇p.result) + Source(macro_grad)
-    ) → VectorEquation(U, boundaries.U)
+    ) → boundaries.U) → solvers.U
 
-    p_eqn = (
-        - Laplacian{schemes.p.laplacian}(rDf, p) == - Source(divHv)
-    ) → ScalarEquation(p, boundaries.p)
+    L_p = ((
+        - Laplacian{schemes.p.laplacian}(rDf) == - Source(divHv)
+    ) → boundaries.p) → solvers.p
+
+    U_eqn = L_U(U)
+    p_eqn = L_p(p)
 
     @reset U_eqn.preconditioner = set_preconditioner(solvers.U.preconditioner, U_eqn)
     @reset p_eqn.preconditioner = set_preconditioner(solvers.p.preconditioner, p_eqn)
@@ -279,7 +286,7 @@ function solve_cell_problem_fibers(model, config, e_j; pref=0.0)
     xdir, ydir, zdir = XDir(), YDir(), ZDir()
 
     for iter in 1:runtime.iterations
-        rx, ry, rz = solve_equation!(U_eqn, U, boundaries.U, solvers.U, xdir, ydir, zdir, config)
+        rx, ry, rz = solve_equation!(U_eqn, config)
         inverse_diagonal!(rD, U_eqn, config)
         interpolate!(rDf, rD, config)
         remove_pressure_source!(U_eqn, ∇p, config)
@@ -289,7 +296,7 @@ function solve_cell_problem_fibers(model, config, e_j; pref=0.0)
         flux!(mdotf, Uf, config)
         XCALibre.div!(divHv, mdotf, config)
         prev .= p.values
-        rp = solve_equation!(p_eqn, p, boundaries.p, solvers.p, config; ref=pref)
+        rp = solve_equation!(p_eqn, config; ref=pref)
         explicit_relaxation!(p, prev, solvers.p.relax, config)
         grad!(∇p, pf, p, boundaries.p, time, config)
         XCALibre.Solvers.correct_mass_flux!(mdotf, p_eqn, config)
@@ -308,9 +315,8 @@ function solve_cell_problem_fibers(model, config, e_j; pref=0.0)
 end
 
 # ── Mesh generation ───────────────────────────────────────────────────────────
-@info "Building fiber unit cell mesh  (L=$L, N=$N_fibers, R=$R_min–$R_max, h=$mesh_size)..."
-mesh_file = build_fiber_unit_cell(L, N_fibers, R_min, R_max, fiber_length, mesh_size; seed=seed)
-mesh      = UNV3D_mesh(mesh_file)
+@info "Building fiber unit cell mesh  (L=$L, N=$N_fibers, R=$(R_min)-$(R_max), h=$mesh_size)..."
+mesh = build_fiber_unit_cell(L, N_fibers, R_min, R_max, fiber_length, mesh_size; seed=seed)
 @info "Mesh loaded: $(length(mesh.cells)) cells, $(length(mesh.boundaries)) patches"
 
 backend  = CPU(); workgroup = 1024; activate_multithread(backend)

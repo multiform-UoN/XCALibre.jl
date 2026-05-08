@@ -131,10 +131,11 @@ function initialise(
         - Laplacian{schemes.he.laplacian}(keff, he)
         ==
         Source(S_he) - Source(divK) - Source(dKdt)
-    ) → eqn
+    ) → (@set eqn.BCs = config.boundaries.he)
 
     @reset energy_eqn.preconditioner = set_preconditioner(solvers.he.preconditioner, energy_eqn)
     @reset energy_eqn.solver = _workspace(solvers.he.solver, _b(energy_eqn))
+    @reset energy_eqn.setup = solvers.he
 
     init_residual = (:he, 1.0)
     state = ModelState(init_residual, false)

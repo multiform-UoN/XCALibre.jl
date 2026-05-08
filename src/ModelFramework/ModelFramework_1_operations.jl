@@ -1,6 +1,6 @@
 export →, PDEOperator
 
-const TemplateTerm = Union{OperatorTemplate,NonlinearOperatorTemplate}
+const TemplateTerm = Union{OperatorTemplate,NonlinearOperatorTemplate,Time}
 
 @inline _negate_template(t::OperatorTemplate) = @set t.sign = -t.sign
 @inline _negate_template(t::NonlinearOperatorTemplate) = @set t.op.sign = -t.op.sign
@@ -131,4 +131,36 @@ end
     elseif S.parameters[1].parameters[1] <: AbstractVectorField
         ModelEquation(VectorModel(), model, eqn, nothing, nothing, nothing)
     end
+end
+
+# ── PDEOperator Binding Logic ───────────────────────────────────────────────
+
+@inline _bind_template(t, phi) = t(phi)
+# Pre-bound Operator (cross-field coupling): phi is already set — ignore bind-time phi
+@inline _bind_template(t::Operator, phi) = t
+# Time tag: call constructor to create Operator
+@inline _bind_template(t::Time{T}, phi) where T = Time{T}(phi)
+
+@inline _bind_templates(::Tuple{}, phi) = ()
+@inline _bind_templates(templates::Tuple, phi) =
+    (_bind_template(first(templates), phi), _bind_templates(Base.tail(templates), phi)...)
+
+# Applying PDEOperator to a field produces a ModelEquation (complete BVP)
+function (L::PDEOperator)(phi::ScalarField)
+    terms = _bind_templates(L.templates, phi)
+    model = Model{length(L.templates), length(L.sources)}(
+        terms,
+        L.sources
+    )
+    # Note: L.BCs might be empty/nothing here if not yet set
+    ModelEquation(ScalarModel(), model, ScalarEquation(phi, L.BCs), nothing, nothing, L.setup)
+end
+
+function (L::PDEOperator)(phi::VectorField)
+    terms = _bind_templates(L.templates, phi)
+    model = Model{length(L.templates), length(L.sources)}(
+        terms,
+        L.sources
+    )
+    ModelEquation(VectorModel(), model, VectorEquation(phi, L.BCs), nothing, nothing, L.setup)
 end
