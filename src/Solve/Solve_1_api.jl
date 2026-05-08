@@ -229,9 +229,6 @@ function solve_equation!(
     setup = eqn.setup
     discretise!(eqn, phi, config)
     apply_boundary_conditions!(eqn, config; time=time)
-    if length(eqn.model.terms) == 1 && typeof(eqn.model.terms[1]) <: Laplacian
-        make_symmetric!(eqn, config) # added this to test stability of periodic boundaries
-    end
     setReference!(eqn, ref, 1, config)
     if !isnothing(irelax)
         implicit_relaxation!(eqn, phi.values, irelax, nothing, config)
@@ -395,10 +392,10 @@ function solve_system!(phiEqn::ModelEquation, setup, result, component, config)
     (; values, mesh) = result
     
     A = _A(phiEqn)
-    opA = A
+    opA = parent(A)
     b = _b(phiEqn, component)
 
-    apply_smoother!(setup.smoother, values, A, b, hardware)
+    apply_smoother!(setup.smoother, values, opA, b, hardware)
 
     krylov_solve!(
         solver, opA, b, values; 

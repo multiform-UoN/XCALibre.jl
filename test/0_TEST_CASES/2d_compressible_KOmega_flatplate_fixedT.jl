@@ -90,21 +90,22 @@ U = SolverSetup(
     solver      = Bicgstab(), # Bicgstab(), Gmres()
     preconditioner = Jacobi(),
     convergence = 1e-7,
-    relax       = 0.7,
+    relax       = 0.3,
     rtol = 1e-1
 ),
 p = SolverSetup(
-    solver      = Cg(), # Bicgstab(), Gmres()
+    solver      = Gmres(), # Bicgstab(), Gmres()
     preconditioner = DILU(), #Jacobi(),
     convergence = 1e-7,
-    relax       = 0.2,
-    rtol = 1e-2
+    relax       = 0.1,
+    rtol = 1e-3,
+    itmax = 500
 ),
 he = SolverSetup(
     solver      = Bicgstab(), # Bicgstab(), Gmres()
     preconditioner = DILU(),
     convergence = 1e-7,
-    relax       = 0.7,
+    relax       = 0.3,
     rtol = 1e-1,
 ),
 k = SolverSetup(

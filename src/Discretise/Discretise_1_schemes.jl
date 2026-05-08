@@ -299,16 +299,46 @@ end
 
 # IMPLICIT SOURCE
 @inline function scheme!(
-    term::Operator{F,P,I,Si}, 
+    term::Operator{F,P,I,Si},
     nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime
     )  where {F,P,I}
     0.0, 0.0
 end
 @inline scheme_source!(
     term::Operator{F,P,I,Si}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
-    
-    # Retrieve and calculate flux for cell 
+
+    # Retrieve and calculate flux for cell
     flux = term.sign*term.flux[cID]*cell.volume # indexed with cID
     ac = flux # indexed with cIndex
     ac, 0.0
+end
+
+# NONLINEAR IMPLICIT SOURCE
+#
+# NonLinearSi stores an arbitrary function f(φ) as a type tag.
+# In the normal newton_solve! path, linearize_physics converts NonLinearSi → Si
+# BEFORE discretise! is called, so this scheme is never reached there.
+#
+# This scheme enables two additional use cases:
+#   1. explicit_residual!(r, eqn, phi, config) — matrix-free evaluation of the
+#      true nonlinear residual F(phi) = A_lin·phi + f(phi)·vol − b,
+#      used directly in JFNK without any workaround.
+#   2. Picard iteration — solve_equation! on a NonLinearSi equation treats
+#      f(φ^k) as an explicit source and iterates (less robust than Newton).
+#
+# Contribution to r in explicit_residual!:
+#   r[i] += 0·φᵢ − b = −(−sign·f(φᵢ)·vol) = sign·f(φᵢ)·vol   ✓
+@inline function scheme!(
+    term::Operator{F,P,I,NonLinearSi{Fun}},
+    nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
+) where {F,P,I,Fun}
+    0.0, 0.0   # source only — no face flux contribution
+end
+
+@inline function scheme_source!(
+    term::Operator{F,P,I,NonLinearSi{Fun}}, cell, cID, cIndex, prev, runtime
+) where {F,P,I,Fun}
+    val = prev[cID]
+    b   = -term.sign * term.type.func(val) * cell.volume
+    zero(val), b   # ac=0 (nothing on diagonal), b carries explicit nonlinear value
 end

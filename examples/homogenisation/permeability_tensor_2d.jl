@@ -7,6 +7,16 @@ using KernelAbstractions
 # ==============================================================================
 # Multi-Directional Stokes Cell Problem (Permeability Tensor)
 # ==============================================================================
+# This script computes the effective permeability tensor K by solving the 
+# Stokes cell problem for multiple forcing directions.
+#
+# METHODOLOGY:
+# For each coordinate direction j ∈ {1, ..., d}:
+#   1. Apply a macro-gradient (body force) e_j to the momentum equation.
+#   2. Solve the steady Stokes problem on the microstructure.
+#   3. The j-th column of K is the volume-average velocity: K[:, j] = <w^(j)>.
+# ==============================================================================
+
 function solve_stokes_direction(model, config, J_macro; pref=0.0)
     (; solvers, schemes, runtime, hardware, boundaries) = config
     (; U, p, Uf, pf) = model.momentum
@@ -27,17 +37,21 @@ function solve_stokes_direction(model, config, J_macro; pref=0.0)
     macro_grad = VectorField(mesh)
     initialise!(macro_grad, J_macro)
 
-    U_eqn = (
-        Time{schemes.U.time}(U)
-        + Divergence{schemes.U.divergence}(mdotf, U) 
-        - Laplacian{schemes.U.laplacian}(nueff, U) 
+    # Use the new PDEOperator DSL for abstract definitions
+    L_U = ((
+          Time{schemes.U.time}()
+        + Divergence{schemes.U.divergence}(mdotf) 
+        - Laplacian{schemes.U.laplacian}(nueff) 
         == 
         - Source(∇p.result) + Source(macro_grad)
-    ) → VectorEquation(U, boundaries.U)
+    ) → boundaries.U) → solvers.U
 
-    p_eqn = (
-        - Laplacian{schemes.p.laplacian}(rDf, p) == - Source(divHv)
-    ) → ScalarEquation(p, boundaries.p)
+    L_p = ((
+        - Laplacian{schemes.p.laplacian}(rDf) == - Source(divHv)
+    ) → boundaries.p) → solvers.p
+
+    U_eqn = L_U(U)
+    p_eqn = L_p(p)
 
     @reset U_eqn.preconditioner = set_preconditioner(solvers.U.preconditioner, U_eqn)
     @reset p_eqn.preconditioner = set_preconditioner(solvers.p.preconditioner, p_eqn)
@@ -68,7 +82,7 @@ function solve_stokes_direction(model, config, J_macro; pref=0.0)
     xdir, ydir, zdir = XDir(), YDir(), ZDir()
 
     for iter ∈ 1:iterations
-        rx, ry, rz = solve_equation!(U_eqn, U, boundaries.U, solvers.U, xdir, ydir, zdir, config)
+        rx, ry, rz = solve_equation!(U_eqn, config)
         inverse_diagonal!(rD, U_eqn, config)
         interpolate!(rDf, rD, config)
         remove_pressure_source!(U_eqn, ∇p, config)
@@ -78,7 +92,7 @@ function solve_stokes_direction(model, config, J_macro; pref=0.0)
         flux!(mdotf, Uf, config)
         XCALibre.div!(divHv, mdotf, config)
         prev .= p.values
-        rp = solve_equation!(p_eqn, p, boundaries.p, solvers.p, config; ref=pref)
+        rp = solve_equation!(p_eqn, config; ref=pref)
         explicit_relaxation!(p, prev, solvers.p.relax, config)
         grad!(∇p, pf, p, boundaries.p, time, config) 
         XCALibre.Solvers.correct_mass_flux!(mdotf, p_eqn, config)

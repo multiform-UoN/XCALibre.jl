@@ -30,12 +30,33 @@ ModelFramework.Laplacian{T}(flux, map::NonlinearMap) where T =
 ModelFramework.Divergence{T}(flux, map::NonlinearMap) where T =
     NonlinearOperatorTemplate(OperatorTemplate(flux, 1, Divergence{T}()), map)
 
-# Two-argument constructor: NonLinearSi(func, phi) → Operator with NonLinearSi type tag
-ModelFramework.NonLinearSi(func::Function, phi) =
-    Operator(nothing, phi, 1, NonLinearSi(NonlinearMap(func)))
+# ── New PDEOperator DSL: NonLinearSi(func) → OperatorTemplate ─────────────────
+# Field is deferred — bound later when L(phi) is called via OperatorTemplate.__call__.
+# Enables:
+#   L = (... + NonLinearSi(f) == ...) → BCs → solver
+#   newton_solve!(L, C, config)
+#
+# Implementation note: the type tag NonLinearSi{T} is created with the inner
+# parametric constructor NonLinearSi{T}(map) to avoid dispatching back through
+# these outer constructor methods.
+ModelFramework.NonLinearSi(func::Function) = begin
+    map = NonlinearMap(func)
+    OperatorTemplate(nothing, 1, NonLinearSi{typeof(map)}(map))
+end
+
+ModelFramework.NonLinearSi(func::Function, deriv::Function) = begin
+    map = NonlinearMap(func, deriv)
+    OperatorTemplate(nothing, 1, NonLinearSi{typeof(map)}(map))
+end
+
+# ── Old DSL (backward compatible): NonLinearSi(func, phi) → bound Operator ────
+ModelFramework.NonLinearSi(func::Function, phi) = begin
+    map = NonlinearMap(func)
+    Operator(nothing, phi, 1, NonLinearSi{typeof(map)}(map))
+end
 
 ModelFramework.NonLinearSi(map::NonlinearMap, phi) =
-    Operator(nothing, phi, 1, NonLinearSi(map))
+    Operator(nothing, phi, 1, NonLinearSi{typeof(map)}(map))
 
 @inline _zero_bc_value(value::Number) = zero(value)
 @inline _zero_bc_value(value::StaticArray) = zero(value)
@@ -57,6 +78,11 @@ ModelFramework.NonLinearSi(map::NonlinearMap, phi) =
 @inline homogeneous(bc::Extrapolated) = bc
 @inline homogeneous(bc::Symmetry) = bc
 @inline homogeneous(bc::Outlet) = bc
+# Periodic BCs impose a connectivity constraint, not a prescribed value.
+# The Newton correction δφ must satisfy the same periodicity as φ itself,
+# so the homogeneous periodic BC is identical to the original.
+@inline homogeneous(bc::Periodic) = bc
+@inline homogeneous(bc::PeriodicParent) = bc
 @inline homogeneous(bc::Tuple{}) = ()
 @inline homogeneous(BCs::Tuple) = map(homogeneous, BCs)
 @inline homogeneous(BCs::AbstractVector{<:AbstractBoundary}) = map(homogeneous, BCs)

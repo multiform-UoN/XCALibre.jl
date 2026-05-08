@@ -30,21 +30,36 @@ h = ScalarField(mesh_dev); initialise!(h, 0.1)
 h.values .+= 0.01 .* rand(length(h.values)) 
 
 @info "Solving Darcy Thin-Film (h mobility)..."
+
+# Define abstract PDE template once
+L_h_template = (
+      Time{schemes.h.time}()
+    + Biharmonic{schemes.h.laplacian}(nothing) # flux will be updated in loop
+    ==
+    Source(0.0)
+) → BCs.h → solvers.h
+
 for step in 1:10
     global h
     # Mobility M = Kh/μ.
     M_val = mean(h.values) / mu
     
-    h_eqn = (
-          Time{schemes.h.time}(h)
-        + Biharmonic{schemes.h.laplacian}(ConstantScalar(gamma * M_val), h)
+    # Update the flux in the operator template and bind to h
+    # (Using @set or just reconstructing L_h with the new coefficient)
+    L_h = (
+          Time{schemes.h.time}()
+        + Biharmonic{schemes.h.laplacian}(ConstantScalar(gamma * M_val))
         ==
-        Source(ConstantScalar(0.0))
-    ) → ScalarEquation(h, BCs.h)
+        Source(0.0)
+    ) → BCs.h → solvers.h
 
+    h_eqn = L_h(h)
+
+    # Initialise solver (can be done once outside if we use split assembly, 
+    # but here we follow standard solve)
     @reset h_eqn.preconditioner = set_preconditioner(solvers.h.preconditioner, h_eqn)
     @reset h_eqn.solver = XCALibre._workspace(solvers.h.solver, XCALibre._b(h_eqn))
 
-    res = solve_equation!(h_eqn, h, BCs.h, solvers.h, config)
+    res = solve_equation!(h_eqn, config)
     @printf("Step %d: Res = %.2e, Mean h = %.4f\n", step, res, mean(h.values))
 end

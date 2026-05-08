@@ -143,7 +143,7 @@ struct NonLinearSi{Fun}
     func::Fun
 end
 function Adapt.adapt_structure(to, itp::NonLinearSi{Fun}) where {Fun}
-    NonLinearSi(itp.func)
+    NonLinearSi{Fun}(itp.func)   # inner constructor — bypasses outer dispatch
 end
 
 # Higher-order operator type tag (4th-order biharmonic: Δ²ϕ)

@@ -129,19 +129,20 @@ function save_output(model::Physics{T,F,SO,M,Tu,E,D,BI}, outputWriter, iteration
 end
 
 
-function save_output(model::Physics{T,F,SO,M,Tu,E,D,BI}, outputWriter, iteration, time, config
-    ) where {T,F,SO,M,Tu,E<:Energy,D,BI}
+function save_output(model::Physics{T,F,SO,M,Nothing,E,D,BI}, outputWriter, iteration, time, config
+    ) where {T,F,SO,M,E<:AbstractEnergyModel,D,BI}
 
-    # Minimal output: Velocity and Pressure if they exist
+    # Minimal output for pure energy/conduction solves
     args = []
     if !isnothing(model.momentum)
         if hasproperty(model.momentum, :U) push!(args, ("U", model.momentum.U)) end
         if hasproperty(model.momentum, :p) push!(args, ("p", model.momentum.p)) end
     end
     
-    # Add temperature
-    if !isnothing(model.energy)
+    if hasproperty(model.energy, :T)
         push!(args, ("T", model.energy.T))
+    elseif hasproperty(model.energy, :he)
+        push!(args, ("he", model.energy.he))
     end
 
     write_results(iteration, time, model.domain, outputWriter, config.boundaries, args...)
