@@ -7,19 +7,27 @@
 
 Construct a monolithic block-coupled system.
 
-`phi_list[i]` must be the ScalarField that equation `i` solves for (the
-"self field" of that equation).  This cannot be inferred automatically
-because the first term of an equation may be a cross-field coupling term.
+`phi_list[i]` must be the field that equation `i` solves for.
+Any `VectorEquation` and `VectorField` passed will be automatically decomposed 
+into their constituent scalar components.
 
 # Example
-    sys = MonolithicSystem([C1_eqn, C2_eqn], [C1, C2])
+    sys = MonolithicSystem([p_eqn, U_eqn], [p, U])
 """
-function MonolithicSystem(eqns::Vector{<:ModelEquation}, phi_list)
-    n_cells = length(phi_list[1].mesh.cells)
+function MonolithicSystem(eqns, phi_list)
+    flat_eqns = []
+    flat_phis = []
+    
+    for (eqn, phi) in zip(eqns, phi_list)
+        append!(flat_eqns, decompose(eqn))
+        append!(flat_phis, decompose(phi))
+    end
+    
+    n_cells = length(flat_phis[1].mesh.cells)
     # Key: objectid of the mutable values array — stable across immutable struct copies
     field_to_idx = Dict{UInt, Int}()
-    for (i, phi) in enumerate(phi_list)
+    for (i, phi) in enumerate(flat_phis)
         field_to_idx[objectid(phi.values)] = i
     end
-    MonolithicSystem(eqns, phi_list, length(eqns), n_cells, field_to_idx)
+    MonolithicSystem(Vector{ModelEquation}(flat_eqns), flat_phis, length(flat_eqns), n_cells, field_to_idx)
 end

@@ -32,21 +32,25 @@ h.values .+= 0.01 .* rand(length(h.values)) # Random perturbation
 @info "Solving Shallow Water Thin-Film (h³ mobility)..."
 for step in 1:10
     global h
-    # Mobility M = h³/3μ. We linearize this using our new Newton framework
-    # or just treat it as a coefficient for this simple test.
+    # Mobility M = h³/3μ.
     M_val = mean(h.values)^3 / (3.0 * mu)
     
-    # Using the Biharmonic operator for the 4th order surface tension part
-    h_eqn = (
-          Time{schemes.h.time}(h)
-        + Biharmonic{schemes.h.laplacian}(ConstantScalar(gamma * M_val), h)
+    # ── Define Abstract PDE for Height ────────────────────────────────────────
+    # Using the Biharmonic operator for the 4th order surface tension part.
+    # This allows for implicit treatment of surface tension, ensuring stability
+    # even at larger time steps.
+    L_h = ((
+          Time{Euler}()
+        + Biharmonic{Linear}(ConstantScalar(gamma * M_val))
         ==
-        Source(ConstantScalar(0.0))
-    ) → ScalarEquation(h, BCs.h)
+        Source(0.0)
+    ) → BCs.h) → solvers.h
+
+    h_eqn = L_h(h)
 
     @reset h_eqn.preconditioner = set_preconditioner(solvers.h.preconditioner, h_eqn)
     @reset h_eqn.solver = XCALibre._workspace(solvers.h.solver, XCALibre._b(h_eqn))
 
-    res = solve_equation!(h_eqn, h, BCs.h, solvers.h, config)
+    res = solve_equation!(h_eqn, config)
     @printf("Step %d: Res = %.2e, Mean h = %.4f\n", step, res, mean(h.values))
 end

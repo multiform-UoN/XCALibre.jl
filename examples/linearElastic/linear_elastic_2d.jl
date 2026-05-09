@@ -85,26 +85,31 @@ mu_flux    = ConstantScalar(mu_val)
 alpha_flux = ConstantScalar(alpha_val)
 
 # ── Equation system ───────────────────────────────────────────────────────────
-u_eqn = (
-    - Laplacian{Linear}(mu_flux,    u)
-    - GradDiv{Linear,1,1}(alpha_flux, u)
-    - GradDiv{Linear,1,2}(alpha_flux, v)
-    == Source(ConstantScalar(0.0))
-) → ScalarEquation(u, BCs.u)
+# Use the new PDEOperator DSL for the block-coupled system.
+# Self-field terms are templates; cross-field terms are pre-bound.
+L_u = ((
+    - Laplacian{Linear}(mu_flux)
+    - GradDiv{Linear,1,1}(alpha_flux)
+    - GradDiv{Linear,1,2}(alpha_flux, v)  # cross-coupling to v
+    == Source(0.0)
+) → BCs.u) → solvers.u
 
-v_eqn = (
-    - Laplacian{Linear}(mu_flux,    v)
-    - GradDiv{Linear,2,1}(alpha_flux, u)
-    - GradDiv{Linear,2,2}(alpha_flux, v)
-    == Source(ConstantScalar(0.0))
-) → ScalarEquation(v, BCs.v)
+L_v = ((
+    - Laplacian{Linear}(mu_flux)
+    - GradDiv{Linear,2,1}(alpha_flux, u)  # cross-coupling to u
+    - GradDiv{Linear,2,2}(alpha_flux)
+    == Source(0.0)
+) → BCs.v) → solvers.v
+
+u_eqn = L_u(u)
+v_eqn = L_v(v)
 
 # ── Monolithic solve ──────────────────────────────────────────────────────────
 @info "Building monolithic 2-field linear elastic system..."
 sys = MonolithicSystem([u_eqn, v_eqn], [u, v])
 
 @info "Solving..."
-res = solve_monolithic!(sys, (BCs.u, BCs.v), config)
+res = solve_monolithic!(sys, [BCs.u, BCs.v], config)
 
 # ── Verification ──────────────────────────────────────────────────────────────
 xs    = [c.centre[1] for c in mesh_dev.cells]

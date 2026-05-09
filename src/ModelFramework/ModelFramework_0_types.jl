@@ -1,6 +1,6 @@
 export AbstractOperator, AbstractSource, AbstractEquation
 export Operator, OperatorTemplate, PDEOperator, ScaledFlux, Source, Src
-export Time, TimeTerm, Laplacian, Divergence, Si, NonLinearSi
+export Time, TimeTerm, Laplacian, Divergence, Si, CoupledSi, NonLinearSi
 export NonlinearMap, NonlinearOperator, NonlinearOperatorTemplate, AffineOperator
 export Biharmonic
 export GradDiv
@@ -30,18 +30,24 @@ struct Operator{F,P,S,T} <: AbstractOperator
 end
 Adapt.@adapt_structure Operator
 
-# Operator Template (no field bound)
-struct OperatorTemplate{F,S,T} <: AbstractOperator
+# Operator Template (field bound optionally)
+struct OperatorTemplate{F,S,T,P} <: AbstractOperator
     flux::F
     sign::S
     type::T
+    phi::P  # Bound field for cross-field coupling, or Nothing for self-field
 end
 Adapt.@adapt_structure OperatorTemplate
 
+# Default 3-arg constructor sets phi=nothing
+OperatorTemplate(flux, sign, type) = OperatorTemplate(flux, sign, type, nothing)
+
 # Binding: apply template to a field → current Operator
 function (t::OperatorTemplate)(phi)
-    flux = t.flux === nothing ? ConstantScalar(one(_get_int(phi.mesh))) : t.flux
-    Operator(flux, phi, t.sign, t.type)
+    # If t already has a bound phi (cross-field), use it. Otherwise use the bind-time phi.
+    target_phi = t.phi === nothing ? phi : t.phi
+    flux = t.flux === nothing ? ConstantScalar(one(_get_int(target_phi.mesh))) : t.flux
+    Operator(flux, target_phi, t.sign, t.type)
 end
 
 # Scaled flux wrapper — allows PDEOperator * scalar without touching scheme! signatures
@@ -53,7 +59,15 @@ Base.getindex(sf::ScaledFlux, i) = sf.flux[i] * sf.scale
 Base.length(sf::ScaledFlux) = length(sf.flux)
 Adapt.@adapt_structure ScaledFlux
 
-# operators
+# Coupled implicit source (off-diagonal coupling)
+struct CoupledSi end
+function Adapt.adapt_structure(to, itp::CoupledSi)
+    CoupledSi()
+end
+
+# constructors
+
+CoupledSi(flux, phi_source) = OperatorTemplate(flux, 1, CoupledSi(), phi_source)
 
 struct Time{T} end
 struct TimeTerm{T} end

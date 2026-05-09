@@ -21,5 +21,6 @@ include("ModelFramework_0_types.jl")
 include("ModelFramework_1_operations.jl")
 include("ModelFramework_2_access_functions.jl")
 include("ModelFramework_3_coupled.jl")
+include("ModelFramework_4_vector_decompose.jl")
 
 end

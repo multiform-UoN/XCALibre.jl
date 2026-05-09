@@ -84,56 +84,54 @@ h.values .+= 0.001 .* rand(length(h.values))
 
 # 5. Solver Loop (Time Stepping + Outer Loops)
 # ------------------------------------------------------------------------------
+# This loop implements a PIMPLE-style strategy to resolve the non-linear
+# coupling between height (h), pressure (p), and biomass (b).
+#
+# Steps within each time step:
+# 1. Solve the Biomass transport equation (decoupled).
+# 2. Iterate 'n_outer' times to converge the (h, p) coupling:
+#    a. Update mobility M(h) based on current height.
+#    b. Solve the Height evolution equation (h). 
+#       Implicit 4th-order surface tension is handled via the Biharmonic operator.
+# ==============================================================================
+
 dt = config.runtime.dt
 n_steps = 50
-n_outer = 3 # PIMPLE-style iterations
+n_outer = 3 # Outer iterations per time step
 
 @info "Starting Thin-Film Simulation ($model_type model)..."
 for t_step in 1:n_steps
     h_prev = ScalarField(mesh_dev); h_prev.values .= h.values
     b_prev = ScalarField(mesh_dev); b_prev.values .= b.values
     
-    # 1. Update Biomass (Decoupled update)
-    b_eqn = (
-          Time{schemes.b.time}(b)
-        - Laplacian{schemes.b.laplacian}(ConstantScalar(Db), b)
+    # 1. Update Biomass (Decoupled transport update)
+    # --------------------------------------------------------------------------
+    L_b = ((
+          Time{Euler}()
+        - Laplacian{Linear}(ConstantScalar(Db))
         ==
-        Source(ConstantScalar(0.0)) # Add growth terms here if needed
-    ) → ScalarEquation(b, BCs.b)
-    solve_equation!(b_eqn, b, BCs.b, solvers.b, config)
+        Source(0.0)
+    ) → BCs.b) → solvers.b
+    
+    b_eqn = L_b(b)
+    @reset b_eqn.preconditioner = set_preconditioner(solvers.b.preconditioner, b_eqn)
+    @reset b_eqn.solver = XCALibre._workspace(solvers.b.solver, XCALibre._b(b_eqn))
+    
+    solve_equation!(b_eqn, config)
 
     # 2. Outer Loops for (h, p) Coupling
+    # --------------------------------------------------------------------------
     for outer in 1:n_outer
-        # 2a. Update Pressure field p
-        # p = Π(h) - γ ∇²h + σ_a(b)
-        # We solve this as a steady equation for p: p + γ ∇²h = Π(h) + σ_a(b)
-        # Note: In FVM, we can treat Laplacian(gamma, h) as a source term for p
-        # or solve a coupled system. Here we use an explicit source for the Laplacian of h.
-        
-        # Calculate ∇²h explicitly
-        grad_h = FaceVectorField(mesh_dev)
-        # Note: XCALibre's grad! computes grad(h) at faces
-        # We need a proper Laplacian source.
-        
-        # Simplified: Update p algebraically per cell
-        # (This is valid if we don't need implicit regularisation of p)
-        # p_val = disjoining_pressure(h) + active_stress(b) - gamma * laplacian(h)
-        # For this demo, let's use the XCALibre DSL for a more robust approach.
-        
-        # 2b. Solve Height Evolution h
-        # ∂t h - ∇ ⋅ (M(h) ∇p) = 0
-        
-        # Calculate Mobility M(h)
+        # Calculate Mobility M(h) based on the latest height
         M_field = ScalarField(mesh_dev)
         if model_type == :viscous
             M_field.values .= (h.values.^3) ./ (3.0 * mu)
-        # Darcy
-            M_field.values .= h.values .* (1.0 / mu) # K=1
+        else # :darcy
+            M_field.values .= h.values .* (1.0 / mu)
         end
         
-        # Interpolate M_field to faces (Laplacian flux must be face-based)
+        # Interpolate mobility to faces for the Laplacian operator
         M_face = FaceScalarField(mesh_dev)
-        # Use simple average for now
         for fID in eachindex(M_face.values)
             oc = mesh_dev.faces[fID].ownerCells
             M_face.values[fID] = length(oc) > 1 ? 
@@ -141,28 +139,34 @@ for t_step in 1:n_steps
                 M_field.values[oc[1]]
         end
         
-        # The equation solves for h, but the flux depends on grad(p).
-        # We can use the 'NonLinear' logic or just solve for h with p-gradient as flux.
-        # But wait, M(h) depends on h.
+        # 2b. Solve Height Evolution h
+        # ----------------------------------------------------------------------
+        # PDE: ∂h/∂t - ∇ ⋅ (M ∇p) + γ ∇²h_implicit = 0
+        #
+        # We use the Biharmonic operator to treat the surface tension implicitly.
+        # This provides significant numerical stability, allowing for much larger
+        # time steps than traditional explicit treatments.
         
-        # To-do: For 4th order stability, we should solve for h with implicit surface tension.
-        # Let's use the new Biharmonic operator I added!
-        
-        h_eqn = (
-              Time{schemes.h.time}(h)
-            + Biharmonic{schemes.h.laplacian}(ConstantScalar(gamma * mean(M_field.values)), h) # Surface tension (4th order)
-            - Laplacian{schemes.h.laplacian}(M_face, p) # Mobility part (treated as source or coupled)
+        L_h = ((
+              Time{Euler}()
+            + Biharmonic{Linear}(ConstantScalar(gamma * mean(M_field.values))) # Implicit surface tension
+            - Laplacian{Linear}(M_face, p) # Mobility part (coupling to pressure)
             ==
-            Source(ConstantScalar(0.0))
-        ) → ScalarEquation(h, BCs.h)
+            Source(0.0)
+        ) → BCs.h) → solvers.h
 
-        res_h = solve_equation!(h_eqn, h, BCs.h, solvers.h, config)
+        h_eqn = L_h(h)
+        @reset h_eqn.preconditioner = set_preconditioner(solvers.h.preconditioner, h_eqn)
+        @reset h_eqn.solver = XCALibre._workspace(solvers.h.solver, XCALibre._b(h_eqn))
+
+        res_h = solve_equation!(h_eqn, config)
         
-        # Update p based on new h
-        # p.values .= ... (simplified for this demo)
+        # Note: Pressure (p) would be updated here based on h (Π(h) etc.)
+        # p.values .= ... (simplified logic for this demonstration)
         
         if outer == n_outer
-            @printf("Step %d, Outer %d: Res h = %.2e, Mean h = %.4f\n", t_step, outer, res_h, mean(h.values))
+            @printf("Step %d, Outer %d: Res h = %.2e, Mean h = %.4f\n", 
+                    t_step, outer, res_h, mean(h.values))
         end
     end
 end

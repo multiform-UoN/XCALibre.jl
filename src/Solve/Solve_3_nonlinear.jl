@@ -127,27 +127,33 @@ end
 
 # ---------------------------------------------------------------------------
 # linearize_physics: convert all NonlinearOperator terms into standard Operators
-# using automatic differentiation (ForwardDiff default, Enzyme optional)
+# using automatic differentiation.
 # ---------------------------------------------------------------------------
-"""
-    linearize_physics(BCs, model_eqn; susp=false, ad_backend=:forwarddiff)
 
-Pre-pass Newton linearisation. Detects `NonlinearOperator` and `NonLinearSi` terms,
-differentiates the stored functions at current field values, and returns a fresh
-linearised `ModelEquation`. The input equation is kept as the nonlinear template.
 """
-function linearize_physics(BCs, model_eqn::ModelEquation; susp=false, ad_backend=:forwarddiff)
+    linearize_physics(BCs, model_eqn, other_fields=[]; susp=false, ad_backend=:forwarddiff)
+
+Pre-pass Newton linearisation for a single equation. 
+`other_fields` allows for cross-field dependencies in `NonLinearSi` terms.
+Returns (new_bcs, linearised_model_eqn, cross_coupling_terms).
+"""
+function linearize_physics(BCs, model_eqn::ModelEquation, other_fields=[]; susp=false, ad_backend=:forwarddiff)
     phi = get_phi(model_eqn)
+    all_vars = [phi, other_fields...]
+    var_indices = Dict(objectid(v.values) => k for (k, v) in enumerate(all_vars))
+    
     # 1. Linearise BCs (NonLinearRobin → Robin)
     new_bcs = linearize_bcs(BCs, phi)
 
     # 2. Linearise model terms
     extra_sources = []
+    # Key: objectid of target field, Value: List of coupling operators
+    cross_terms = Dict{UInt, Vector{AbstractOperator}}()
 
     new_terms = map(model_eqn.model.terms) do term
         # Case A: Non-linear Differential Operators (Wrapped in NonlinearOperator)
-        # Must check this BEFORE NonLinearSi since NonlinearOperator has no .type field
         if term isa NonlinearOperator
+            # ... (Existing single-field logic)
             map = term.map
             inner_op = term.op
             term_phi = inner_op.phi
@@ -166,16 +172,16 @@ function linearize_physics(BCs, model_eqn::ModelEquation; susp=false, ad_backend
                 jacobian.values[i] = dv
                 offset.values[i] = r0 - dv * v0
             end
-
             return AffineOperator(inner_op, jacobian, offset, reference, map)
 
         # Case B: Standard Non-linear Implicit Source (NonLinearSi)
         elseif hasproperty(term, :type) && typeof(term.type) <: NonLinearSi
             map = term.type.func
             term_phi = term.phi
-            vals = term_phi.values
             mesh = term_phi.mesh
+            vals = term_phi.values
             _assert_cpu_linearization(mesh)
+
             k_imp = ScalarField(mesh)
             s_exp = ScalarField(mesh)
 
@@ -185,9 +191,7 @@ function linearize_physics(BCs, model_eqn::ModelEquation; susp=false, ad_backend
                 dv = _map_derivative(map, v0, ad_backend)
                 term_sign = term.sign
 
-                # Equation: ... + R(phi) = ...
-                # Newton: R(phi) ≈ dv * phi + (r0 - dv * v0)
-                # SuSp logic is opt-in; otherwise keep the exact local Newton term.
+
                 if !susp || term_sign * dv > 0
                     k_imp.values[i] = dv
                     s_exp.values[i] = -term_sign * (r0 - dv * v0)
@@ -209,7 +213,7 @@ function linearize_physics(BCs, model_eqn::ModelEquation; susp=false, ad_backend
     new_sources = (model_eqn.model.sources..., extra_sources...)
     new_model = Model{length(new_terms_tuple), length(new_sources)}(new_terms_tuple, new_sources)
 
-    return new_bcs, @set model_eqn.model = new_model
+    return new_bcs, (@set model_eqn.model = new_model), cross_terms
 end
 
 function _newton_tolerance(model_eqn, tol)

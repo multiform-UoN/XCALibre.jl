@@ -8,6 +8,8 @@ const TemplateTerm = Union{OperatorTemplate,NonlinearOperatorTemplate,Time}
 @inline _negate_template(t::Operator) = @set t.sign = -t.sign
 
 Base.:+(a::TemplateTerm, b::TemplateTerm) = PDEOperator((a, b), (), (), nothing)
+Base.:+(a::TemplateTerm, b::Operator) = PDEOperator((a, b), (), (), nothing)
+Base.:+(a::Operator, b::TemplateTerm) = PDEOperator((a, b), (), (), nothing)
 Base.:+(a::PDEOperator, b::TemplateTerm) = PDEOperator((a.templates..., b), a.sources, a.BCs, a.setup)
 Base.:+(a::PDEOperator, b::Src) = PDEOperator(a.templates, (a.sources..., b), a.BCs, a.setup)
 
@@ -21,6 +23,8 @@ Base.:-(a::PDEOperator, b::Operator) =
 Base.:-(a::TemplateTerm) = PDEOperator((_negate_template(a),), (), (), nothing)
 
 Base.:-(a::TemplateTerm, b::TemplateTerm) = PDEOperator((a, _negate_template(b)), (), (), nothing)
+Base.:-(a::TemplateTerm, b::Operator) = PDEOperator((a, _negate_template(b)), (), (), nothing)
+Base.:-(a::Operator, b::TemplateTerm) = PDEOperator((a, _negate_template(b)), (), (), nothing)
 
 Base.:-(a::PDEOperator, b::TemplateTerm) =
     PDEOperator((a.templates..., _negate_template(b)), a.sources, a.BCs, a.setup)

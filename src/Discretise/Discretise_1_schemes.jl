@@ -297,6 +297,19 @@ end
     term::Operator{F,P,I,VectorDiv{T,J_COL}}, cell, cID, cIndex, prev, runtime
 ) where {F,P,I,T,J_COL} = (0.0, 0.0)
 
+# CoupledSi
+@inline scheme!(
+    term::Operator{F,P,I,CoupledSi}, nzval, cell, face,  cellN, ns, cID, nID, cIndex, nIndex, fID, prev, runtime
+    )  where {F,P,I} = begin
+    0.0, 0.0, 0.0
+end
+
+@inline function scheme_source!(
+    term::Operator{F,P,I,CoupledSi}, cell, cID, cIndex, prev, runtime
+) where {F,P,I}
+    return term.sign * term.flux[cID] * cell.volume, 0.0
+end
+
 # IMPLICIT SOURCE
 @inline function scheme!(
     term::Operator{F,P,I,Si},
