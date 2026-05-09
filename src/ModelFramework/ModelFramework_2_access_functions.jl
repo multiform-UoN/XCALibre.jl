@@ -39,8 +39,11 @@ ZDir() = ZDir(3)
 @inline _term_flux(term) = term.op.flux
 
 @inline get_phi(eqn::ModelEquation{T,M,E,S,P}) where {T,M,E,S,P} = begin
-    _term_phi(eqn.model.terms[1])
+    get_phi(eqn.equation)
 end
+
+@inline get_phi(eqn::ScalarEquation) = eqn.phi
+@inline get_phi(eqn::VectorEquation) = eqn.psi
 
 @inline get_flux(eqn::ModelEquation{T,M,E,S,P}, ti::Integer) where {T,M,E,S,P} = begin 
     _term_flux(eqn.model.terms[ti])

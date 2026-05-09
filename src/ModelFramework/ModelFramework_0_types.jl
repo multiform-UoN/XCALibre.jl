@@ -283,8 +283,9 @@ _build_A(backend::CPU, i, j, v, n) = SparseXCSR(sparsecsr(i, j, v, n, n))
 _build_opA(A::SparseXCSR) = A
 
 ## ORIGINAL STRUCTURE PARAMETERISED FOR GPU
-struct ScalarEquation{VTf<:AbstractVector, ASA<:AbstractSparseArray, OP, B} <: AbstractEquation
-    A::ASA
+struct ScalarEquation{Fld, VTf, AM<:AbstractMatrix, OP, B} <: AbstractEquation
+    phi::Fld
+    A::AM
     opA::OP
     b::VTf
     R::VTf
@@ -326,6 +327,7 @@ ScalarEquation(phi::ScalarField, BCs; extended=false) = begin
     backend = _get_backend(mesh)
     A = _build_A(backend, i, j, v, nCells)
     ScalarEquation(
+        phi,
         A,
         _build_opA(A),
         KernelAbstractions.zeros(backend, Tf, nCells),
@@ -335,9 +337,10 @@ ScalarEquation(phi::ScalarField, BCs; extended=false) = begin
         )
 end
 
-struct VectorEquation{VTf<:AbstractVector, ASA<:AbstractSparseArray, OP, B} <: AbstractEquation
-    A0::ASA
-    A::ASA
+struct VectorEquation{Fld, VTf, AM<:AbstractMatrix, OP, B} <: AbstractEquation
+    psi::Fld
+    A0::AM
+    A::AM
     opA::OP
     bx::VTf
     by::VTf
@@ -367,6 +370,7 @@ VectorEquation(psi::VectorField, BCs) = begin
     A = _build_A(backend, i, j, v, nCells)
     A0 = _build_A(backend, i, j, v, nCells)
     VectorEquation(
+        psi,
         A0,
         A,
 

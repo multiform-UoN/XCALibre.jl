@@ -377,6 +377,7 @@ function solve_system!(phiEqn::ModelEquation, setup, result, component, config)
         ndrange = length(result.values)
         kernel! = _copy!(_setup(config.hardware.backend, config.hardware.workgroup, ndrange)...)
         kernel!(result.values, S.x)
+        KernelAbstractions.synchronize(config.hardware.backend)
         
         return solve_residual(phiEqn, component, config)
     end
@@ -412,6 +413,7 @@ function solve_system!(phiEqn::ModelEquation, setup, result, component, config)
     ndrange = length(values)
     kernel! = _copy!(_setup(backend, workgroup, ndrange)...)
     kernel!(values, x)
+    KernelAbstractions.synchronize(backend)
 
     Krylov.iteration_count(solver) == itmax && @warn "Maximum number of iterations reached!"
 

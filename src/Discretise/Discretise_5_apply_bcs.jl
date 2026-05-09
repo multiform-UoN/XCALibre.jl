@@ -35,48 +35,23 @@ function _apply_boundary_conditions!(
     # Test implementation looking over all boundary faces 
     nbfaces = length(mesh.boundary_cellsID)
 
+    # Ensure BCs is a Tuple for the @generated kernel unrolling
+    BCs_tuple = Tuple(BCs)
+
     for BC ∈ BCs
         facesID_range = BC.IDs_range
-        # start_ID = facesID_range[1]
-
         # update user defined boundary storage (if needed)
         update_user_boundary!(BC, faces, cells, facesID_range, time, config)
-        
     end
-        # Execute apply boundary conditions kernel
-        # ndrange = nbfaces
-        # apply_bcs = apply_boundary_conditions_kernel!(
-        #     _setup(backend, workgroup, ndrange)...)
-        # apply_bcs(
-        #     model, BCs,model.terms, faces, cells, boundary_cellsID, colval, rowptr, nzval, b, component, time, ndrange=ndrange
-        #     )
-        # KernelAbstractions.synchronize(backend)
 
-        ndrange = nbfaces
+    ndrange = nbfaces
+    if ndrange > 0
         kernel! = apply_boundary_conditions_kernel!(_setup(backend, workgroup, ndrange)...)
         kernel!(
-            model, BCs,model.terms, faces, cells, boundary_cellsID, colval, rowptr, nzval, b, component, time, ndrange=ndrange
+            model, BCs_tuple, model.terms, faces, cells, boundary_cellsID, colval, rowptr, nzval, b, component, time, ndrange=ndrange
             )
         KernelAbstractions.synchronize(backend)
-
-    # Loop over boundary conditions to apply boundary conditions 
-    # for BC ∈ BCs
-    #     facesID_range = BC.IDs_range
-    #     start_ID = facesID_range[1]
-
-    #     # update user defined boundary storage (if needed)
-    #     # update_user_boundary!(BC, faces, cells, facesID_range, time, config)
-    #     #= The `model` passed here is defined in ModelFramework_0_types.jl line 87. It has two properties: terms and sources which define the equation being solved =#
-    #     update_user_boundary!(BC, faces, cells, facesID_range, time, config)
-        
-    #     # Execute apply boundary conditions kernel
-    #     kernel_range = length(facesID_range)
-
-    #     kernel! = apply_boundary_conditions_kernel!(backend, workgroup, kernel_range)
-    #     kernel!(
-    #         model, BC, model.terms, faces, cells, start_ID, boundary_cellsID, colval, rowptr, nzval, b, component, time, ndrange=kernel_range
-    #         )
-    # end
+    end
 end
 
 update_user_boundary!(
@@ -95,35 +70,30 @@ update_user_boundary!(
         BCs, model, terms, faces, cells, boundary_cellsID, colval, rowptr, nzval, b, component, time, fID)
 end
 
-@generated function calculate_coefficients(
-    BCs, model, terms, faces, cells, boundary_cellsID,colval, rowptr, nzval, b, component, time, fID)
-    N = length(BCs.parameters)
-    unroll = Expr(:block)
-    for bci ∈ 1:N
-        BC_checks = quote
-            @inbounds begin
-                BC = BCs[$bci] 
-                (; start, stop) = BC.IDs_range
-                if start <= fID <= stop
-                    i = fID - start + 1
-                    cellID = boundary_cellsID[fID]
-                    face = faces[fID]
-                    cell = cells[cellID] 
+function calculate_coefficients(
+    BCs, model, terms, faces, cells, boundary_cellsID, colval, rowptr, nzval, b, component, time, fID)
+    
+    # Non-generated loop over boundary patches. 
+    # This is safe for both Tuple and Vector BCs.
+    for BC ∈ BCs
+        (; start, stop) = BC.IDs_range
+        if start <= fID <= stop
+            i = fID - start + 1
+            cellID = boundary_cellsID[fID]
+            face = faces[fID]
+            cell = cells[cellID] 
 
-                    zcellID = spindex(rowptr, colval, cellID, cellID)
-                    AP, BP = apply!(
-                        model, BC, terms, 
-                        colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
-                        )
-                    Atomix.@atomic nzval[zcellID] += AP
-                    Atomix.@atomic b[cellID] += BP
-                    return nothing
-                end
-            end
+            zcellID = spindex(rowptr, colval, cellID, cellID)
+            AP, BP = apply!(
+                model, BC, terms, 
+                colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+                )
+            Atomix.@atomic nzval[zcellID] += AP
+            Atomix.@atomic b[cellID] += BP
+            return nothing
         end
-        push!(unroll.args, BC_checks)
     end
-    return unroll
+    return nothing
 end
 
 @generated function get_BC(BCs, index)

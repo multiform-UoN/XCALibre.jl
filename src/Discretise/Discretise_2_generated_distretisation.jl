@@ -31,7 +31,7 @@ function discretise!(
     ndrange = length(mesh.cells)
     kernel! = _discretise_vector_model!(_setup(backend, workgroup, ndrange)...)
     kernel!(model, model.terms, model.sources, mesh, nzval0, nzval, colval, rowptr, bx, by, bz, prev, runtime)
-    # # KernelAbstractions.synchronize(backend)
+    KernelAbstractions.synchronize(backend)
 end
 
 # @kernel function _discretise_vector_model!(
@@ -116,7 +116,7 @@ function discretise!(
     ndrange = length(mesh.cells)
     kernel! = _discretise_scalar_model!(_setup(backend, workgroup, ndrange)...)
     kernel!(model, model.terms, model.sources, mesh, nzval, colval, rowptr, b, prev, runtime)
-    # # KernelAbstractions.synchronize(backend)
+    KernelAbstractions.synchronize(backend)
 end
 
 # Discretise kernel function
@@ -457,6 +457,7 @@ function explicit_residual!(r::AbstractVector, eqn::ModelEquation{T,M,E,S,P}, ph
     ndrange = length(mesh.cells)
     kernel! = _explicit_residual_scalar!(_setup(backend, workgroup, ndrange)...)
     kernel!(eqn.model, eqn.model.terms, eqn.model.sources, mesh, r, get_values(phi, nothing), runtime)
+    KernelAbstractions.synchronize(backend)
 end
 
 @kernel function _explicit_residual_scalar!(model::Model{TN,SN,T,S}, terms::TERMS, sources::SRCS, mesh, r::AbstractArray{F}, prev, runtime) where {TN,SN,T,S,F,TERMS,SRCS}

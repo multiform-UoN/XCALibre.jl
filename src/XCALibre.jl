@@ -11,6 +11,8 @@ include("Multithread/Multithread.jl")
 include("Mesh/Mesh.jl")
 include("UNV2/UNV2.jl")
 include("UNV3/UNV3.jl")
+include("Mesh/gmsh/Gmsh_builder.jl")
+using .Gmsh; export Gmsh2D_mesh, Gmsh3D_mesh
 include("FoamMesh/FoamMesh.jl")
 include("Fields/Fields.jl")
 include("ModelFramework/ModelFramework.jl")

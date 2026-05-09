@@ -1,112 +1,101 @@
-# ==============================================================================
-# Example: Direct Gmsh.jl Integration (Poisson Problem)
-# ==============================================================================
-# This script demonstrates a complete, self-contained CAD-to-Solution workflow:
+# =============================================================================
+# TUTORIAL: Gmsh Integration — Direct API vs File Import
+# =============================================================================
 #
-# 1. GEOMETRY & MESH: Uses Gmsh.jl to programmatically define a unit square,
-#    classify boundary edges into physical groups, and generate a mesh.
+# This tutorial demonstrates the two ways to bring complex geometries into 
+# XCALibre.jl using Gmsh.
 #
-# 2. XCALIBRE LOADING: Seamlessly loads the Gmsh-generated mesh into XCALibre.
+#   Mode A: Direct API Integration (Bypasses intermediate files)
+#   Mode B: Import from existing mesh (e.g. UNV format)
 #
-# 3. OPERATOR PARADIGM: Uses the new abstract `PDEOperator` DSL to define
-#    the Poisson equation (-∇²φ = f) independently of the field data.
-#
-# 4. SOLUTION: Binds the operator to the field 'phi' and solves the resulting BVP.
-# ==============================================================================
+# =============================================================================
 
 using XCALibre
+using LinearAlgebra
+using Accessors
+using Printf
 using Gmsh
-using Test
 
-# ... (rest of the file)
+# ── PROBLEM: Poisson Equation ───────────────────────────────────────────────
+# -∇²phi = 1  on a disk
+# phi = 0 on boundary
+# Analytical: phi = (R² - r²)/4
+# ─────────────────────────────────────────────────────────────────────────────
 
-function generate_mesh_gmsh(filename)
-    gmsh.initialize()
-    gmsh.model.add("simple_box")
+radius = 1.0
+lc = 0.1
+
+function run_sim(mesh, mode_name)
+    backend = CPU(); workgroup = 1024
+    mesh_dev = adapt(backend, mesh)
     
-    # Define a 1x1 square
-    lc = 0.1
-    gmsh.model.geo.addPoint(0, 0, 0, lc, 1)
-    gmsh.model.geo.addPoint(1, 0, 0, lc, 2)
-    gmsh.model.geo.addPoint(1, 1, 0, lc, 3)
-    gmsh.model.geo.addPoint(0, 1, 0, lc, 4)
+    phi = ScalarField(mesh_dev); initialise!(phi, 0.0)
     
-    gmsh.model.geo.addLine(1, 2, 1)
-    gmsh.model.geo.addLine(2, 3, 2)
-    gmsh.model.geo.addLine(3, 4, 3)
-    gmsh.model.geo.addLine(4, 1, 4)
+    # Setup BCs
+    BCs = assign(region=mesh_dev, (
+        phi = [Dirichlet(b.name, 0.0) for b in mesh.boundaries],
+    ))
     
-    gmsh.model.geo.addCurveLoop([1, 2, 3, 4], 1)
-    gmsh.model.geo.addPlaneSurface([1], 1)
+    # Define PDE
+    L_phi = ( - Laplacian{Linear}(ConstantScalar(1.0)) == Source(1.0) ) → BCs.phi
     
-    # Define physical groups for boundaries
-    gmsh.model.addPhysicalGroup(1, [4], 101, "left")
-    gmsh.model.addPhysicalGroup(1, [2], 102, "right")
-    gmsh.model.addPhysicalGroup(1, [1], 103, "bottom")
-    gmsh.model.addPhysicalGroup(1, [3], 104, "top")
-    gmsh.model.addPhysicalGroup(2, [1], 201, "domain")
+    setup = SolverSetup(solver=Bicgstab(), preconditioner=Jacobi(), convergence=1e-10, relax=1.0)
+    config = Configuration(hardware=Hardware(backend=backend, workgroup=workgroup),
+                           runtime=Runtime(iterations=1, time_step=1.0, write_interval=-1),
+                           schemes=(phi=Schemes(laplacian=Linear),),
+                           solvers=(phi=nothing,), boundaries=BCs)
     
-    gmsh.model.geo.synchronize()
-    gmsh.model.mesh.generate(2)
+    eqn = (L_phi → setup)(phi)
     
-    # Export to UNV (robustly supported by XCALibre)
-    gmsh.write(filename)
-    gmsh.finalize()
+    # Explicitly initialize workspace
+    @reset eqn.preconditioner = set_preconditioner(setup.preconditioner, eqn)
+    @reset eqn.solver = XCALibre._workspace(setup.solver, _b(eqn))
+    
+    @info "Solving Poisson on $mode_name mesh..."
+    for i in 1:200
+        res = solve_equation!(eqn, config)
+        res < setup.convergence && break
+    end
+    
+    # Verify center value
+    c_idx = argmin([norm(c.centre) for c in mesh_dev.cells])
+    phi_center = phi.values[c_idx]
+    analytical = radius^2 / 4.0
+    @printf("  Mode %s: Center phi = %.4f (Analytical %.4f)\n", mode_name, phi_center, analytical)
 end
 
-# 1. Generate Mesh
-msh_file = "gmsh_box.unv"
-@info "Generating mesh with Gmsh.jl..."
-generate_mesh_gmsh(msh_file)
+# ── MODE A: Direct Gmsh Integration ──────────────────────────────────────────
 
-# 2. Load Mesh into XCALibre
-@info "Loading mesh into XCALibre..."
-mesh = UNV2D_mesh(msh_file)
-backend = CPU()
-mesh_dev = adapt(backend, mesh)
+gmsh.initialize()
+gmsh.model.add("disk")
+gmsh.option.setNumber("General.Terminal", 0)
 
-# 3. Setup Physics (Simple Poisson Problem)
-@info "Setting up Poisson problem using PDEOperator paradigm..."
+# Create disk geometry
+gmsh.model.occ.addDisk(0, 0, 0, radius, radius)
+gmsh.model.occ.synchronize()
+gmsh.model.addPhysicalGroup(2, [1], 101); gmsh.model.setPhysicalName(2, 101, "domain")
+gmsh.model.addPhysicalGroup(1, [1], 201); gmsh.model.setPhysicalName(1, 201, "boundary")
 
-phi = ScalarField(mesh_dev); initialise!(phi, 0.0)
-k = ConstantScalar(1.0)
-f = ConstantScalar(1.0)
+gmsh.model.mesh.setSize(gmsh.model.getEntities(0), lc)
+gmsh.model.mesh.generate(2)
 
-BCs = assign(
-    region = mesh_dev,
-    (
-        phi = [
-            Dirichlet(:left, 0.0),
-            Dirichlet(:right, 1.0),
-            Zerogradient(:bottom),
-            Zerogradient(:top)
-        ],
-    )
-)
+mesh_direct = Gmsh2D_mesh() # Direct conversion!
+gmsh.finalize()
 
-solvers = (
-    phi = SolverSetup(
-        solver = Cg(),
-        preconditioner = Jacobi(),
-        convergence = 1e-10,
-        relax = 1.0
-    ),
-)
+run_sim(mesh_direct, "DIRECT API")
 
-# 4. Define Operator and Solve
-# Using the new abstract PDE paradigm
-L_phi = (
-    - Laplacian{Linear}(k) == Source(f)
-) → BCs.phi → solvers.phi
+# ── MODE B: Import from Existing Mesh (UNV) ───────────────────────────────────
 
-phi_eqn = L_phi(phi)
+# We use a pre-computed mesh from the examples folder
+grids_dir = pkgdir(XCALibre, "examples/0_GRIDS")
+mesh_file = joinpath(grids_dir, "laplace_unit_3by3.unv")
 
-@info "Solving..."
-res = solve_equation!(phi_eqn, Configuration(solvers=solvers, hardware=Hardware(backend=backend)))
+if isfile(mesh_file)
+    @info "Loading pre-computed UNV mesh: $mesh_file"
+    mesh_file_import = UNV2D_mesh(mesh_file)
+    run_sim(mesh_file_import, "FILE IMPORT") 
+else
+    @warn "Pre-computed mesh not found, skipping Mode B."
+end
 
-@info "Final Residual: $res"
-@test res < 1e-10
-
-# Cleanup
-rm(msh_file)
-@info "Gmsh integration example completed successfully!"
+@info "Gmsh Integration Tutorial Completed!"

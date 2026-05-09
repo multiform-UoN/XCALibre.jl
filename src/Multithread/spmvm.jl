@@ -1,7 +1,7 @@
 export SparseXCSR 
 export activate_multithread
 
-struct SparseXCSR{Bi,Tv,Ti,N} <: AbstractSparseArray{Tv,Ti,N}
+struct SparseXCSR{Bi,Tv,Ti,N} <: AbstractMatrix{Tv}
     parent::SparseMatrixCSR{Bi,Tv,Ti}
 end
 
@@ -14,23 +14,6 @@ KernelAbstractions.get_backend(A::SparseXCSR) = get_backend(A.parent.nzval)
 Base.show(io::IO, A::SparseXCSR) = begin
     print(io, "CSR Matrix with $(length(A.parent.nzval)) entries")
 end
-# Base.show(io::IO, ::MIME"text/plain", ::SparseXCSR) =
-#     print(io, "Array of CSR matrices")
-
-# NOTE: The code below has been taken from https://github.com/BacAmorim/ThreadedSparseCSR.jl
-# ThreadedSparseCSR has not been updated in a while and precompilation fails on Julia 1.11.1
-
-struct RangeIterator
-    k::Int
-    d::Int
-    r::Int
-end
-
-RangeIterator(n::Int, k::Int) = RangeIterator(min(n,k),divrem(n,k)...)
-Base.length(it::RangeIterator) = it.k
-endpos(it::RangeIterator, i::Int) = i*it.d+min(i,it.r)
-Base.iterate(it::RangeIterator, i::Int=1) = i>it.k ? nothing : (endpos(it,i-1)+1:endpos(it,i), i+1)
-
 
 function xmul!(
     y::AbstractVector, Ax::SparseXCSR, x::AbstractVector, alpha::Number, beta::Number)
@@ -40,31 +23,19 @@ function xmul!(
     A.m == size(y, 1) || throw(DimensionMismatch())
 
     o = getoffset(A)
+    m = size(y, 1)
 
-    @sync for r in RangeIterator(size(y, 1), Threads.nthreads())
-        Threads.@spawn for row in r
-            @inbounds begin
-                accu = zero(eltype(y))
-                for nz in nzrange(A, row)
-                    col = A.colval[nz] + o
-                    accu += A.nzval[nz]*x[col]
-                end
-                y[row] = alpha*accu + beta*y[row]
-            end
+    # Simple loop for CPU to avoid any threading issues during debugging
+    for row in 1:m
+        accu = zero(eltype(y))
+        for nz in nzrange(A, row)
+            col = A.colval[nz] + o
+            accu += A.nzval[nz] * x[col]
         end
+        y[row] = alpha * accu + beta * y[row]
     end
 
     return y
-
-end
-
-function xmul!(A::SparseXCSR, x::AbstractVector)
-    xmul!(y, parent(A), x, true, false)
-end
-
-function xmul(y::AbstractVector, A::SparseXCSR, x::AbstractVector)
-    y = similar(x)
-    xmul!(y, parent(A), x, true, false)
 end
 
 """
@@ -82,14 +53,16 @@ activate_multithread(backend::CPU; nthreads=1) = BLAS.set_num_threads(nthreads)
 
 # Extend multiplications methods in LinearAlgebra and Base
 
-function  LinearAlgebra.mul!(y::AbstractVector, A::SparseXCSR, x::AbstractVector, alpha::Number, beta::Number)
+function LinearAlgebra.mul!(y::AbstractVector, A::SparseXCSR, x::AbstractVector, alpha::Number, beta::Number)
     return xmul!(y, A, x, alpha, beta)
 end
 
-function  LinearAlgebra.mul!(y::AbstractVector, A::SparseXCSR, x::AbstractVector)
+function LinearAlgebra.mul!(y::AbstractVector, A::SparseXCSR, x::AbstractVector)
     return xmul!(y, A, x, true, false)
 end
 
-function  Base.:*(A::SparseMatrixCSR, x::SparseXCSR)
-    return xmul(A, x)
+function Base.:*(A::SparseXCSR, x::AbstractVector)
+    y = similar(x)
+    mul!(y, A, x)
+    return y
 end

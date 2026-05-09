@@ -43,8 +43,9 @@ end
 
 is_ldiv(precon::Preconditioner{T,M,P,S}) where {T,M,P,S} = T <: LDIVPreconditioner
 
-Preconditioner{NormDiagonal}(A::AbstractSparseArray{F,I}) where {F,I} = begin
+Preconditioner{NormDiagonal}(A::AbstractMatrix) = begin
     backend = get_backend(A)
+    F = eltype(A)
     m, n = size(A)
     m == n || throw("Matrix not square")
     S = KernelAbstractions.zeros(backend, F, m)
@@ -52,8 +53,9 @@ Preconditioner{NormDiagonal}(A::AbstractSparseArray{F,I}) where {F,I} = begin
     Preconditioner{NormDiagonal,typeof(A),typeof(P),typeof(S)}(A,P,S)
 end
 
-Preconditioner{Jacobi}(A::AbstractSparseArray{F,I}) where {F,I} = begin
+Preconditioner{Jacobi}(A::AbstractMatrix) = begin
     backend = get_backend(A)
+    F = eltype(A)
     m, n = size(A)
     m == n || throw("Matrix not square")
     S = KernelAbstractions.zeros(backend, F, m)

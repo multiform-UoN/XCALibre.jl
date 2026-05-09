@@ -32,7 +32,7 @@ begin
     return P
 end
 
-function update_preconditioner!(P::Preconditioner{NormDiagonal,M,PT,S}, mesh, config) where {M<:AbstractSparseArray,PT,S}
+function update_preconditioner!(P::Preconditioner{NormDiagonal,M,PT,S}, mesh, config) where {M<:AbstractMatrix,PT,S}
     # backend = _get_backend(mesh)
 
     (; hardware) = config
@@ -62,7 +62,7 @@ end
     # end
 end
 
-function update_preconditioner!(P::Preconditioner{Jacobi,M,PT,S}, mesh, config) where {M<:AbstractSparseArray,PT,S}
+function update_preconditioner!(P::Preconditioner{Jacobi,M,PT,S}, mesh, config) where {M<:AbstractMatrix,PT,S}
     # backend = _get_backend(mesh)
 
     (; hardware) = config
@@ -92,19 +92,9 @@ end
     end
 end
 
-# update_preconditioner!(P::Preconditioner{LDL,M,PT,S},  mesh, config) where {M<:AbstractSparseArray,PT,S} =
-# begin
-#     nothing
-# end
+# ...
 
-
-# update_preconditioner!(P::Preconditioner{ILU0,M,PT,S},  mesh, config) where {M<:AbstractSparseArray,PT,S} =
-# begin
-#     ilu0!(P.storage, P.A)
-#     nothing
-# end
-
-update_preconditioner!(P::Preconditioner{DILU,M,PT,S},  mesh, config) where {M<:AbstractSparseArray,PT,S} =
+update_preconditioner!(P::Preconditioner{DILU,M,PT,S},  mesh, config) where {M<:AbstractMatrix,PT,S} =
 begin
     update_dilu_diagonal!(P, mesh, config)
     nothing

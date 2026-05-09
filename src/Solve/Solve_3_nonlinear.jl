@@ -240,7 +240,7 @@ function newton_solve!(
     converged = false
 
     for iter in 1:maxiter
-        updated_bcs, linear_eqn = linearize_physics(get_bcs(model_eqn), model_eqn; susp=susp, ad_backend=ad_backend)
+        updated_bcs, linear_eqn, _ = linearize_physics(get_bcs(model_eqn), model_eqn; susp=susp, ad_backend=ad_backend)
         linear_eqn = _with_bcs(linear_eqn, updated_bcs)
 
         # exact_residual=true  → r = A_lin*u - b_lin = F(u_k) exactly (Newton linearisation

@@ -1,107 +1,28 @@
 # src/UNV3/UNV3_2_builder.jl
 
 using LinearAlgebra
-import Gmsh: gmsh
 
-export UNV3D_mesh, Gmsh3D_mesh
+export UNV3D_mesh
 
-"""
-    Gmsh3D_mesh(; scale=1, integer_type=Int64, float_type=Float64) -> Mesh3
-
-Directly convert the active Gmsh model mesh into XCALibre.jl Mesh3 format.
-Bypasses intermediate file formats (UNV/MSH).
-
-### Optional arguments
-- `scale`: scaling factor for coordinates.
-- `integer_type`: integer type for connectivity.
-- `float_type`: floating point type for geometry.
-"""
-function Gmsh3D_mesh(; scale=1, integer_type=Int64, float_type=Float64)
-    I = integer_type
-    F = float_type
-
-    println("Extracting 3D Gmsh mesh data...")
-    
-    # 1. Get Nodes
-    nodeTags, coords, _ = gmsh.model.mesh.getNodes()
-    n_nodes = length(nodeTags)
-    
-    # Map Gmsh nodeTags to 1-based indices
-    tag_to_idx = Dict{Int, I}()
-    points = Vector{Point{F, SVector{3, F}}}(undef, n_nodes)
-    for i in 1:n_nodes
-        tag_to_idx[Int(nodeTags[i])] = I(i)
-        points[i] = Point(SVector{3, F}(coords[3i-2] * scale, coords[3i-1] * scale, coords[3i] * scale))
-    end
-
-    # 2. Get 2D Faces (for boundaries)
-    # Gmsh 2D: 2 (triangle), 3 (quad)
-    f_types, f_tags, f_nodes = gmsh.model.mesh.getElements(2)
-    efaces = Face{I, Vector{I}}[]
-    face_tag_to_idx = Dict{Int, I}()
-    
-    f_counter = 0
-    for (t, tags, nodes) in zip(f_types, f_tags, f_nodes)
-        npe = Int(gmsh.model.mesh.getElementProperties(t)[4])
-        for i in 1:length(tags)
-            f_counter += 1
-            el_nodes = [tag_to_idx[Int(n)] for n in nodes[(i-1)*npe+1 : i*npe]]
-            push!(efaces, Face(I(f_counter), I(npe), el_nodes))
-            face_tag_to_idx[Int(tags[i])] = I(f_counter)
-        end
-    end
-
-    # 3. Get 3D Cells
-    # Gmsh 3D: 4 (tet), 5 (hex), 6 (prism), 7 (pyramid)
-    c_types, c_tags, c_nodes = gmsh.model.mesh.getElements(3)
-    cells_UNV = Cell_UNV{I, Vector{I}}[]
-    
-    c_counter = 0
-    for (t, tags, nodes) in zip(c_types, c_tags, c_nodes)
-        npe = Int(gmsh.model.mesh.getElementProperties(t)[4])
-        for i in 1:length(tags)
-            c_counter += 1
-            el_nodes = [tag_to_idx[Int(n)] for n in nodes[(i-1)*npe+1 : i*npe]]
-            push!(cells_UNV, Cell_UNV(I(c_counter), I(npe), el_nodes))
-        end
-    end
-
-    # 4. Process Physical Groups (Boundaries)
-    physGroups = gmsh.model.getPhysicalGroups(2) # 2D boundaries in 3D mesh
-    boundaryElements = BoundaryElement{String, I, Vector{I}}[]
-    for (dim, tag) in physGroups
-        name = gmsh.model.getPhysicalName(dim, tag)
-        if isempty(name) name = "group_$tag" end
-        
-        entities = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
-        group_faces = I[]
-        for ent in entities
-            _, tags, _ = gmsh.model.mesh.getElements(dim, ent)
-            for t_list in tags
-                for f_tag in t_list
-                    # Map the Gmsh element tag back to our sequential face index
-                    if haskey(face_tag_to_idx, Int(f_tag))
-                        push!(group_faces, face_tag_to_idx[Int(f_tag)])
-                    end
-                end
-            end
-        end
-        
-        loader = BoundaryElement(name, I(tag), group_faces)
-        push!(boundaryElements, loader)
-    end
-
-    @info "Generating mesh connectivity and geometry from Gmsh data..."
-    mesh = _build_UNV3D_mesh_core(points, efaces, cells_UNV, boundaryElements, I, F)
-    
-    @info "Mesh constructed: $(length(mesh.nodes)) nodes | $(length(mesh.faces)) faces | $(length(mesh.cells)) cells."
-    return mesh
-end
+# ==============================================================================
+# TOP-LEVEL API
+# ==============================================================================
 
 """
     UNV3D_mesh(unv_mesh::String; scale::Real=1.0, integer_type::Type=Int64, float_type::Type=Float64) -> Mesh3
 
 Constructs a `Mesh3` object from a Universal (UNV) file format.
+
+# Arguments
+- `unv_mesh::String`: The file path to the UNV mesh file.
+
+# Keyword Arguments
+- `scale::Real=1.0`: A scaling factor applied to the nodal coordinates.
+- `integer_type::Type=Int64`: The integer type used for topological indices and connectivity arrays.
+- `float_type::Type=Float64`: The floating-point type used for coordinates and geometric properties.
+
+# Returns
+- `Mesh3`: A fully constructed 3D mesh object containing nodes, cells, faces, boundaries, and populated geometric properties.
 """
 function UNV3D_mesh(unv_mesh; scale=1.0, integer_type=Int64, float_type=Float64)
     local points, efaces, cells_UNV, boundaryElements

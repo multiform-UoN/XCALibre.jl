@@ -15,7 +15,7 @@ import KrylovPreconditioners as KP
 
 using LinearAlgebra
 using SparseMatricesCSR
-using Krylov
+import Krylov
 using StaticArrays: StaticArray
 
 using XCALibre.Multithread
