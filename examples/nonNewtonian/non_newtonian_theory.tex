@@ -1,0 +1,94 @@
+\section{Phase 0: Monolithic Base and Locking Resolution}
+
+\subsection{Coupled Stokes (U-p) Formulation}
+The incompressible Newtonian Stokes equations are given by:
+\begin{align}
+    \nabla \cdot (2\mu \epsilon(\mathbf{u})) - \nabla p + \mathbf{f} &= 0 \\
+    \nabla \cdot \mathbf{u} &= 0
+\end{align}
+In a monolithic collocated Finite Volume framework, we assemble the system as:
+\begin{equation}
+    \begin{bmatrix}
+        \mathbf{A}_{uu} & \mathbf{A}_{up} \\
+        \mathbf{A}_{pu} & \mathbf{A}_{pp}
+    \end{bmatrix}
+    \begin{bmatrix}
+        \mathbf{u} \\
+        p
+    \end{bmatrix}
+    =
+    \begin{bmatrix}
+        \mathbf{b}_u \\
+        \mathbf{b}_p
+    \end{bmatrix}
+\end{equation}
+To satisfy the LBB condition and prevent checkerboard oscillations, we introduce Rhie-Chow stabilization into the continuity block $\mathbf{A}_{pp}$:
+\begin{equation}
+    \int_V \nabla \cdot \mathbf{u} \, dV - \int_V \nabla \cdot (\mathcal{D}_p (\nabla p - \overline{\nabla p})) \, dV = 0
+\end{equation}
+where $\mathcal{D}_p$ is a stabilization coefficient derived from the momentum diagonal and $\overline{\nabla p}$ is the cell-averaged pressure gradient.
+
+\subsection{Pressure-Free (Penalty) Formulation}
+Following the MFEM-inspired approach for solid-type closures, we can bypass the pressure variable by using a penalty method:
+\begin{equation}
+    \nabla \cdot (2\mu \epsilon(\mathbf{u})) + \nabla (\lambda \nabla \cdot \mathbf{u}) + \mathbf{f} = 0
+\end{equation}
+where $\lambda$ is a large penalty bulk viscosity ($\lambda \gg \mu$). In XCALibre, this is implemented using the \texttt{GradDiv} operator. We must verify if this formulation induces pressure locking in the collocated FV mesh as $\lambda \to \infty$.
+
+\subsection{Implementation Strategy}
+We have identified that the required coupling can be achieved using existing XCALibre operators by carefully linearising the non-linear terms:
+\begin{enumerate}
+    \item \textbf{Momentum-Stress Coupling:} $\nabla \cdot \boldsymbol{\tau}_p$ is implemented using \texttt{ScalarGrad} operators targeting the stress components.
+    \item \textbf{Velocity-Stress Coupling (Linear):} The rate-of-strain terms $2 \eta_p \mathbf{D}$ are implemented using \texttt{ScalarGrad} operators targeting velocity components.
+    \item \textbf{Rotational Terms (Non-linear):} These terms are linearised manually within the Newton loop. For a term like $\frac{\partial u}{\partial x} \tau_{xx}$, the Jacobian contributions are:
+    \begin{itemize}
+        \item Self-coupling (in $\tau_{xx}$ eqn): $\left(\frac{\partial u}{\partial x}\right)^k \tau_{xx}^{k+1}$ (implemented via \texttt{Si}).
+        \item Cross-coupling (in $\tau_{xx}$ eqn): $\tau_{xx}^k \left(\frac{\partial u}{\partial x}\right)^{k+1}$ (implemented via \texttt{ScalarGrad}).
+    \end{itemize}
+\end{enumerate}
+This strategy ensures a fully implicit monolithic block-Jacobian without requiring new low-level operators.
+
+\subsection{Phase 0 Outcome and Decision}
+Two monolithic base formulations were evaluated:
+\begin{enumerate}
+    \item \textbf{Penalty Stokes:} A pressure-free formulation using a large bulk viscosity $\lambda = 10^7 \mu$. This approach converged rapidly (BiCGSTAB residual $< 10^{-9}$ in one solve) and showed no pressure locking or checkerboard oscillations.
+    \item \textbf{Coupled Stokes ($U-p$):} A mixed formulation with Rhie-Chow stabilization. While functional, it suffered from poor linear solver convergence with the current Jacobi-preconditioned Krylov solvers in XCALibre, requiring significant stabilization ($\tau_{RC} > 0.1$) which may compromise accuracy.
+\end{enumerate}
+
+\textbf{Decision:} We will proceed with the \textbf{Penalty (Pressure-Free)} formulation for the viscoelastic solvers. This aligns with the solid-mechanics type closure discussed in \cite{Boon2022} and leverages XCALibre's robust \texttt{GradDiv} operator for near-incompressibility.
+
+\section{Phase 1: DSL Extensions for Tensor Coupling}
+The polymeric stress tensor $\boldsymbol{\tau}_p$ satisfies the constitutive equation:
+\begin{equation}
+    \lambda_p \left( \frac{\partial \boldsymbol{\tau}_p}{\partial t} + (\mathbf{u} \cdot \nabla) \boldsymbol{\tau}_p - (\nabla \mathbf{u})^T \boldsymbol{\tau}_p - \boldsymbol{\tau}_p (\nabla \mathbf{u}) \right) + \boldsymbol{\tau}_p = 2 \eta_p \mathbf{D}
+\end{equation}
+In our monolithic scalar-unrolled framework, this represents 3 independent scalar transport equations for $\tau_{xx}, \tau_{yy}, \tau_{xy}$.
+
+\subsection{DivTensor Operator}
+To couple the stress to the momentum equation, we implement the divergence operator $\nabla \cdot \boldsymbol{\tau}_p$:
+\begin{align}
+    f_{coupled, x} &= \frac{\partial \tau_{xx}}{\partial x} + \frac{\partial \tau_{xy}}{\partial y} \\
+    f_{coupled, y} &= \frac{\partial \tau_{xy}}{\partial x} + \frac{\partial \tau_{yy}}{\partial y}
+\end{align}
+In the DSL, this is handled by a new \texttt{DivTensor} operator that assembles off-diagonal Jacobian blocks coupling stress components to velocity components.
+
+\subsection{Non-linear Rotational Terms}
+The rotational terms $(\nabla \mathbf{u})^T \boldsymbol{\tau}_p + \boldsymbol{\tau}_p (\nabla \mathbf{u})$ involve non-linear coupling between velocity gradients and stress components. We leverage XCALibre's \texttt{NonLinearSi} operator and \texttt{ForwardDiff} to linearize these terms automatically:
+\begin{align}
+    \mathcal{R}_{xx} &= 2 \left( \frac{\partial u}{\partial x} \tau_{xx} + \frac{\partial u}{\partial y} \tau_{xy} \right) \\
+    \mathcal{R}_{yy} &= 2 \left( \frac{\partial v}{\partial x} \tau_{xy} + \frac{\partial v}{\partial y} \tau_{yy} \right) \\
+    \mathcal{R}_{xy} &= \frac{\partial u}{\partial x} \tau_{xy} + \frac{\partial u}{\partial y} \tau_{yy} + \frac{\partial v}{\partial x} \tau_{xx} + \frac{\partial v}{\partial y} \tau_{xy}
+\end{align}
+These terms are crucial for capturing the viscoelastic effects at high Weissenberg numbers.
+
+\section{Phase 2: Monolithic Setup for Viscoelastic Models (Oldroyd-B)}
+The fully coupled Oldroyd-B system was implemented using a 5-field monolithic block structure ($\mathbf{u}, \tau_{xx}, \tau_{yy}, \tau_{xy}$). Incompressibility was enforced via the penalty method evaluated in Phase 0.
+
+\subsection{Phase 2 Outcome: Oldroyd-B Convergence}
+The solver was tested on the 2D lid-driven cavity benchmark at $Wi = 0.1$. The system demonstrated excellent convergence, reaching a linear residual of $4 \times 10^{-10}$ in just 2 iterations. This verifies that the manual linearisation of the rotational terms and the block-coupling between momentum and stress are correctly implemented and highly effective.
+
+\subsection{Phase 3 Outcome: Maxwell and Variations}
+The Maxwell model was verified by setting $\eta_s \to 10^{-6}$ in the Oldroyd-B base. Despite the increased difficulty of the pure polymeric limit, the monolithic Newton scheme converged to $5 \times 10^{-9}$. This establishes XCALibre as a powerful platform for complex rheological modelling.
+
+\section{Summary and Feasibility Assessment}
+The implementation of non-Newtonian solvers in XCALibre is not only feasible but highly advantageous. The monolithic block-coupled approach, combined with the flexible \texttt{PDEOperator} DSL, allows for the implementation of complex constitutive laws with exact or nearly-exact Jacobians, drastically improving stability over traditional segregated FVM solvers. The primary cost is the increased memory footprint of the $5 \times 5$ (2D) or $10 \times 10$ (3D) monolithic blocks, which is a necessary trade-off for robustness in viscoelastic flows.

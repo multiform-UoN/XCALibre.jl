@@ -85,6 +85,14 @@ Base.:-(a::Vector{<:AbstractOperator}, b::NonlinearOperator) = begin
     [a..., b]
 end
 
+Base.:+(a::Vector{<:AbstractOperator}, b::OperatorTemplate) = PDEOperator(Tuple(a), (b,), nothing, nothing)
+Base.:+(a::Vector{<:AbstractOperator}, b::NonlinearOperatorTemplate) = PDEOperator(Tuple(a), (), (b,), nothing)
+
+Base.:-(a::Vector{<:AbstractOperator}, b::OperatorTemplate) = begin
+    @reset b.sign = -1
+    PDEOperator(Tuple(a), (b,), nothing, nothing)
+end
+
 # Source operations
 
 Base.:+(a::Src, b::Src) = [a, b]

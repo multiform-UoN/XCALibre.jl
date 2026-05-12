@@ -1,4 +1,4 @@
-export solve_monolithic!, newton_solve!, monolithic_residual!
+export solve_monolithic!, newton_solve!, monolithic_residual!, set_fields!, update_fields!
 
 function _build_monolithic_sparsity(n_vars, n_cells, mesh, TF)
     I_idx = Int[]
@@ -106,7 +106,9 @@ function solve_monolithic!(sys::MonolithicSystem, bcs_list, config)
     end
     
     b_mono = zeros(TF, N)
-    ws = BicgstabWorkspace(KrylovConstructor(b_mono))
+    # Heuristic: use the solver from the first field for the monolithic system
+    solver_type = first(config.solvers).solver
+    ws = _workspace(solver_type, b_mono)
     
     res = TF(NaN)
     for iter in 1:iterations
@@ -116,7 +118,7 @@ function solve_monolithic!(sys::MonolithicSystem, bcs_list, config)
         krylov_solve!(ws, A_op, b_mono; atol=1e-12, rtol=1e-10, itmax=5000, history=true)
 
         if !ws.stats.solved
-            @warn "Monolithic BiCGSTAB iter=$iter: did not converge (niter=$(Krylov.iteration_count(ws)))"
+            @warn "Monolithic $(typeof(solver_type)) iter=$iter: did not converge (niter=$(Krylov.iteration_count(ws)))"
         end
 
         set_fields!(sys, ws.x)
@@ -143,7 +145,9 @@ function newton_solve!(
     converged = false
     N = n_vars * n_cells
 
-    ws = BicgstabWorkspace(KrylovConstructor(zeros(TF, N)))
+    # Heuristic: use the solver from the first field for the monolithic system
+    solver_type = first(config.solvers).solver
+    ws = _workspace(solver_type, zeros(TF, N))
 
     for iter in 1:maxiter
         # 1. Linearize all equations
@@ -183,7 +187,7 @@ function newton_solve!(
         krylov_solve!(ws, A_op, b_homo; atol=1e-12, rtol=1e-10, itmax=5000, history=true)
         
         if !ws.stats.solved
-            @warn "Monolithic Newton inner BiCGSTAB did not converge (niter=$(Krylov.iteration_count(ws)))"
+            @warn "Monolithic Newton inner $(typeof(solver_type)) did not converge (niter=$(Krylov.iteration_count(ws)))"
         end
 
         # 5. Update Fields
