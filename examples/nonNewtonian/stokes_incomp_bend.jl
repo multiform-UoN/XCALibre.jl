@@ -38,7 +38,6 @@ v = ScalarField(mesh_dev); initialise!(v, 0.0)
 p = ScalarField(mesh_dev); initialise!(p, 0.0)
 
 # ── 4. Boundary Conditions ───────────────────────────────────────────────────
-# BC names from blockMeshDict: inlet, outlet, walls, frontAndBack
 BCs = assign(
     region = mesh_dev,
     (
@@ -58,8 +57,8 @@ config = Configuration(solvers=solvers, schemes=(u=Schemes(), v=Schemes(), p=Sch
                        runtime=Runtime(iterations=1, write_interval=-1, time_step=1.0), hardware=hardware, boundaries=BCs)
 
 # ── 6. Equations ──────────────────────────────────────────────────────────────
-mu_cst    = ConstantScalar(mu_val)
-one_cst   = ConstantScalar(1.0)
+mu_cst     = ConstantScalar(mu_val)
+one_cst    = ConstantScalar(1.0)
 tau_rc_cst = ConstantScalar(tau_rc)
 
 L_u = ((- Laplacian{Linear}(mu_cst) + ScalarGrad{Linear,1}(one_cst, p) == Source(force_x)) → BCs.u) → solvers.u
@@ -70,7 +69,10 @@ sys = MonolithicSystem([L_u(u), L_v(v), L_p(p)], [u, v, p])
 
 # ── 7. Solve ──────────────────────────────────────────────────────────────────
 @info "Solving Stokes Bend system..."
-setReference!(sys.equations[3], 0.0, 1, config)
-res = solve_monolithic!(sys, (BCs.u, BCs.v, BCs.p), config)
+res = solve_monolithic!(sys, (BCs.u, BCs.v, BCs.p), config; reference=(3, 0.0, 1))
 @info "Residual: $res, max|u|: $(maximum(abs.(u.values)))"
+
+# ── 8. Output ─────────────────────────────────────────────────────────────────
+mesh_writer = initialise_writer(VTK(), mesh_dev)
+write_results(0, 0.0, mesh_dev, mesh_writer, BCs, ("u", u), ("v", v), ("p", p); suffix="_stokes_bend")
 @info "Benchmark stokes_bend finished."

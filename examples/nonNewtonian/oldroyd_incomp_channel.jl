@@ -24,7 +24,10 @@ hardware  = Hardware(backend=backend, workgroup=workgroup)
 mesh_dev  = adapt(backend, mesh)
 
 # ── 2. Material and Forcing Parameters ────────────────────────────────────────
-mu_s_val    = 1.0; mu_p_val = 1.0; lambda_p = 1.0; dt = 0.01
+lambda_p = length(ARGS) >= 1 ? parse(Float64, ARGS[1]) : 1.0
+dt       = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.01
+n_iter   = length(ARGS) >= 3 ? parse(Int, ARGS[3]) : 10
+mu_s_val    = 1.0; mu_p_val = 1.0; 
 force_x     = 1.0; tau_rc_val = 0.1
 
 @info "Incomp Oldroyd-B Benchmark: mu_s=$mu_s_val, mu_p=$mu_p_val, lambda_p=$lambda_p"
@@ -60,20 +63,24 @@ solvers = (
     txy = SolverSetup(solver=Gmres(), preconditioner=Jacobi(), convergence=1e-10, relax=1.0),
 )
 config = Configuration(solvers=solvers, schemes=(u=Schemes(), v=Schemes(), p=Schemes(), txx=Schemes(), tyy=Schemes(), txy=Schemes()),
-                       runtime=Runtime(iterations=10, write_interval=-1, time_step=dt), hardware=hardware, boundaries=BCs)
+                       runtime=Runtime(iterations=n_iter, write_interval=-1, time_step=dt), hardware=hardware, boundaries=BCs)
 
 # ── 6. Monolithic Equations ───────────────────────────────────────────────────
 one_cst     = ConstantScalar(1.0)
 mu_s_cst    = ConstantScalar(mu_s_val)
 tau_rc_cst  = ConstantScalar(tau_rc_val)
 inv_lam     = ConstantScalar(1.0/lambda_p)
-mu_lam      = ConstantScalar(mu_p_val/lambda_p)
+mu_lam_val  = mu_p_val/lambda_p
+mu_lam_cst  = ConstantScalar(mu_lam_val)
+two_mu_lam  = ConstantScalar(2.0 * mu_lam_val)
 
 mass_flux = FaceScalarField(mesh_dev)
 
 @info "Starting Incomp Oldroyd-B loop..."
 
-for step in 1:runtime.iterations
+mesh_writer = initialise_writer(VTK(), mesh_dev)
+
+for step in 1:config.runtime.iterations
     # Update flux
     for fID in 1:length(mesh_dev.faces)
         face = mesh_dev.faces[fID]
@@ -94,16 +101,15 @@ for step in 1:runtime.iterations
     L_p = (( - Laplacian{Linear}(tau_rc_cst) + VectorDiv{Linear,1}(one_cst, u) + VectorDiv{Linear,2}(one_cst, v) == Source(0.0) ) → BCs.p) → solvers.p
 
     # Stress
-    L_txx = (( Si(inv_lam) + Divergence{Upwind}(mass_flux) - ScalarGrad{Linear,1}(ConstantScalar(2.0*mu_lam), u) == Source(0.0) ) → BCs.txx) → solvers.txx
-    L_tyy = (( Si(inv_lam) + Divergence{Upwind}(mass_flux) - ScalarGrad{Linear,2}(ConstantScalar(2.0*mu_lam), v) == Source(0.0) ) → BCs.tyy) → solvers.tyy
-    L_txy = (( Si(inv_lam) + Divergence{Upwind}(mass_flux) - ScalarGrad{Linear,2}(mu_lam, u) - ScalarGrad{Linear,1}(mu_lam, v) == Source(0.0) ) → BCs.txy) → solvers.txy
+    L_txx = (( Si(inv_lam) + Divergence{Upwind}(mass_flux) - ScalarGrad{Linear,1}(two_mu_lam, u) == Source(0.0) ) → BCs.txx) → solvers.txx
+    L_tyy = (( Si(inv_lam) + Divergence{Upwind}(mass_flux) - ScalarGrad{Linear,2}(two_mu_lam, v) == Source(0.0) ) → BCs.tyy) → solvers.tyy
+    L_txy = (( Si(inv_lam) + Divergence{Upwind}(mass_flux) - ScalarGrad{Linear,2}(mu_lam_cst, u) - ScalarGrad{Linear,1}(mu_lam_cst, v) == Source(0.0) ) → BCs.txy) → solvers.txy
 
     sys = MonolithicSystem([L_u(u), L_v(v), L_p(p), L_txx(txx), L_tyy(tyy), L_txy(txy)], [u, v, p, txx, tyy, txy])
-    setReference!(sys.equations[3], 0.0, 1, config)
-    res = solve_monolithic!(sys, (BCs.u, BCs.v, BCs.p, BCs.txx, BCs.tyy, BCs.txy), config)
+    res = solve_monolithic!(sys, (BCs.u, BCs.v, BCs.p, BCs.txx, BCs.tyy, BCs.txy), config; reference=(3, 0.0, 1))
 
     @printf("Step %d, Residual: %.2e, max|u|: %.4f\n", step, res, maximum(abs.(u.values)))
 end
 
-save_output(u, "oldroyd_incomp_u", 0.0, config)
+write_results(0, 0.0, mesh_dev, mesh_writer, BCs, ("u", u), ("v", v), ("p", p), ("txx", txx), ("tyy", tyy), ("txy", txy); suffix="_oldroyd_incomp")
 @info "Benchmark oldroyd_incomp finished."

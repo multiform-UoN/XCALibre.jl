@@ -120,17 +120,16 @@ sys = MonolithicSystem([u_eqn, v_eqn, p_eqn], [u, v, p])
 
 # ── 7. Solve ──────────────────────────────────────────────────────────────────
 @info "Solving Incompressible Stokes system..."
-# Setting a reference pressure since all boundaries are zeroGradient
-setReference!(p_eqn, 0.0, 1, config)
-res = solve_monolithic!(sys, (BCs.u, BCs.v, BCs.p), config)
+# Exact pressure gauge for the monolithic matrix.  setReference!(p_eqn, ...)
+# only applies to a standalone scalar pressure equation, not to a freshly
+# assembled block system.
+res = solve_monolithic!(sys, (BCs.u, BCs.v, BCs.p), config; reference=(3, 0.0, 1))
 @info "Solve complete. Residual: $res"
 
 # ── 8. Post-process and Results ───────────────────────────────────────────────
 max_u = maximum(abs.(u.values))
 @info "Peak Velocity max|u| = $max_u"
 
-# Exporting results to VTK for verification
-save_output(u, "stokes_incomp_u", 0.0, config)
-save_output(v, "stokes_incomp_v", 0.0, config)
-save_output(p, "stokes_incomp_p", 0.0, config)
+mesh_writer = initialise_writer(VTK(), mesh_dev)
+write_results(0, 0.0, mesh_dev, mesh_writer, BCs, ("u", u), ("v", v), ("p", p); suffix="_stokes_incomp")
 @info "Benchmark stokes_incomp finished."

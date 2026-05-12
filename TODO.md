@@ -64,6 +64,19 @@
 - Phase field: Cahn-Hilliard scalar and monolithic, biharmonic demo
 - Linear elastic: 1-field bar stretch, 2-field monolithic uniaxial
 
+### Non-Newtonian & Viscoelastic Flow (Phase 2 & 3)
+- Fully functional `(u, p, τ)` Practical branch using decoupled pressure and extra-stress.
+- Monolithic field update infrastructure (`set_fields!`, `update_fields!`) and block-coupled variable scattering resolved.
+- Explicit AST operator construction adopted for robust `PDEOperator` scaling and composition.
+- Missing boundary conditions (`Dirichlet`, `Zerogradient`) for `ScalarGrad` and `VectorDiv` coupling operators implemented.
+- Viscoelastic models implemented:
+  - **Maxwell (Linear & Corotational/Jaumann)**
+  - **Kelvin-Voigt**
+  - **Oldroyd-B (Upper-Convected)**
+- Advective transport (`Divergence{Upwind}`) for tensor fields integrated and stabilised.
+- Validation hierarchy established (Stokes baseline $\rightarrow$ Maxwell $\rightarrow$ Oldroyd-B).
+- **Finding**: Rhie-Chow pressure stabilisation does not conflict with viscoelastic extra-stresses; checkerboard modes are successfully suppressed.
+
 ---
 
 ## PENDING

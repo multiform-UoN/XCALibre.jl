@@ -1,4 +1,5 @@
 export solve_monolithic!, newton_solve!, monolithic_residual!, set_fields!, update_fields!
+export apply_monolithic_reference!
 
 function _build_monolithic_sparsity(n_vars, n_cells, mesh, TF)
     I_idx = Int[]
@@ -39,6 +40,60 @@ function assemble_monolithic_system(sys::MonolithicSystem, bcs_list, config)
     monolithic_apply_bcs!(sys, A_csr, b_mono, bcs_list, config)
     
     return A_csr, b_mono
+end
+
+function _monolithic_reference_row(sys::MonolithicSystem, field_index::Integer, cellID::Integer)
+    @assert 1 <= field_index <= sys.n_vars "Invalid monolithic field index $field_index"
+    @assert 1 <= cellID <= sys.n_cells "Invalid reference cell $cellID"
+    return (field_index - 1) * sys.n_cells + cellID
+end
+
+function _monolithic_reference_row(sys::MonolithicSystem, phi, cellID::Integer)
+    field_index = sys.field_to_idx[objectid(phi.values)]
+    return _monolithic_reference_row(sys, field_index, cellID)
+end
+
+"""
+    apply_monolithic_reference!(A, b, sys, field_index_or_field, value, cellID)
+
+Apply an exact Dirichlet row to one scalar block of a monolithic system.  This is
+the pressure gauge fix for block Stokes systems; applying `setReference!` to the
+standalone pressure equation does not affect the freshly assembled monolithic
+matrix.
+"""
+function apply_monolithic_reference!(A_csr::SparseMatricesCSR.SparseMatrixCSR, b, sys::MonolithicSystem,
+                                     field_index::Integer, value, cellID::Integer)
+    row = _monolithic_reference_row(sys, field_index, cellID)
+    @inbounds begin
+        for nzi in A_csr.rowptr[row]:(A_csr.rowptr[row + 1] - 1)
+            A_csr.nzval[nzi] = zero(eltype(A_csr.nzval))
+        end
+        diag = spindex(A_csr.rowptr, A_csr.colval, row, row)
+        @assert diag > 0 "Diagonal entry not found while applying monolithic reference at row $row"
+        A_csr.nzval[diag] = one(eltype(A_csr.nzval))
+        b[row] = value
+    end
+    return nothing
+end
+
+function apply_monolithic_reference!(A_csr::SparseMatricesCSR.SparseMatrixCSR, b, sys::MonolithicSystem,
+                                     phi, value, cellID::Integer)
+    field_index = sys.field_to_idx[objectid(phi.values)]
+    return apply_monolithic_reference!(A_csr, b, sys, field_index, value, cellID)
+end
+
+function _apply_reference_argument!(A_csr, b, sys, reference)
+    reference === nothing && return nothing
+    if reference isa Tuple && length(reference) == 3
+        field, value, cellID = reference
+        apply_monolithic_reference!(A_csr, b, sys, field, value, cellID)
+    else
+        for ref in reference
+            field, value, cellID = ref
+            apply_monolithic_reference!(A_csr, b, sys, field, value, cellID)
+        end
+    end
+    return nothing
 end
 
 function extract_global_vector(sys::MonolithicSystem)
@@ -82,7 +137,7 @@ end
 """
     solve_monolithic!(sys::MonolithicSystem, bcs_list, config)
 """
-function solve_monolithic!(sys::MonolithicSystem, bcs_list, config)
+function solve_monolithic!(sys::MonolithicSystem, bcs_list, config; reference=nothing)
     (; hardware, runtime) = config
     TF = _get_float(sys.phi_list[1].mesh)
     iterations = runtime.iterations
@@ -106,13 +161,16 @@ function solve_monolithic!(sys::MonolithicSystem, bcs_list, config)
     end
     
     b_mono = zeros(TF, N)
-    # Heuristic: use the solver from the first field for the monolithic system
-    solver_type = first(config.solvers).solver
+    # Heuristic: use the solver from the first field for the monolithic system.
+    # Some low-level unit tests construct a minimal Configuration with no
+    # per-field solver setup; GMRES is the safest default for block systems.
+    solver_type = config.solvers === nothing ? Gmres() : first(config.solvers).solver
     ws = _workspace(solver_type, b_mono)
     
     res = TF(NaN)
     for iter in 1:iterations
         A_csr, b_mono = assemble_monolithic_system(sys, bcs_list, config)
+        _apply_reference_argument!(A_csr, b_mono, sys, reference)
         A_op = SparseXCSR(A_csr)
 
         krylov_solve!(ws, A_op, b_mono; atol=1e-12, rtol=1e-10, itmax=5000, history=true)
@@ -145,8 +203,8 @@ function newton_solve!(
     converged = false
     N = n_vars * n_cells
 
-    # Heuristic: use the solver from the first field for the monolithic system
-    solver_type = first(config.solvers).solver
+    # Heuristic: use the solver from the first field for the monolithic system.
+    solver_type = config.solvers === nothing ? Gmres() : first(config.solvers).solver
     ws = _workspace(solver_type, zeros(TF, N))
 
     for iter in 1:maxiter

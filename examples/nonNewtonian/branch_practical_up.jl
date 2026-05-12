@@ -53,23 +53,27 @@ elseif GEOMETRY == :Bend
     v_bcs = [Dirichlet(:walls, 0.0), Zerogradient(:inlet), Zerogradient(:outlet), Symmetry(:frontAndBack)]
     p_bcs = [Zerogradient(:walls), Zerogradient(:inlet), Zerogradient(:outlet), Symmetry(:frontAndBack)]
 end
+BCs = assign(region=mesh_dev, (u=u_bcs, v=v_bcs, p=p_bcs))
+u_bcs, v_bcs, p_bcs = BCs.u, BCs.v, BCs.p
 
 # ── 6. Solver Setup ──
 solvers = (
-    u = SolverSetup(solver=Bicgstab(), preconditioner=Jacobi(), convergence=1e-12, relax=1.0),
-    v = SolverSetup(solver=Bicgstab(), preconditioner=Jacobi(), convergence=1e-12, relax=1.0),
-    p = SolverSetup(solver=Bicgstab(), preconditioner=Jacobi(), convergence=1e-12, relax=1.0),
+    u = SolverSetup(solver=Gmres(), preconditioner=Jacobi(), convergence=1e-12, relax=1.0),
+    v = SolverSetup(solver=Gmres(), preconditioner=Jacobi(), convergence=1e-12, relax=1.0),
+    p = SolverSetup(solver=Gmres(), preconditioner=Jacobi(), convergence=1e-12, relax=1.0),
 )
+nsteps = 20
 config = Configuration(solvers=solvers, schemes=(u=Schemes(), v=Schemes(), p=Schemes()),
-                       runtime=Runtime(iterations=20, write_interval=-1, time_step=dt), hardware=hardware, 
+                       runtime=Runtime(iterations=1, write_interval=-1, time_step=dt), hardware=hardware,
                        boundaries=(u=u_bcs, v=v_bcs, p=p_bcs))
 
 # ── 7. Equations (KV Elimination) ──
 mu_eff = (MODEL == :KelvinVoigt) ? (mu_s + mu_p + G*dt) : mu_s
 mu_cst = ConstantScalar(mu_eff); one_cst = ConstantScalar(1.0); tau_rc_cst = ConstantScalar(tau_rc)
+graddiv_cst = ConstantScalar(0.0) # practical (u,p,tau) branch uses extra stress, not total-stress grad-div
 
-L_u = ((- Laplacian{Linear}(mu_cst) - GradDiv{Linear,1,1}(mu_cst) - GradDiv{Linear,1,2}(mu_cst, v) + ScalarGrad{Linear,1}(one_cst, p)) == Source(src_u))
-L_v = ((- Laplacian{Linear}(mu_cst) - GradDiv{Linear,2,1}(mu_cst, u) - GradDiv{Linear,2,2}(mu_cst) + ScalarGrad{Linear,2}(one_cst, p)) == Source(src_v))
+L_u = ((- Laplacian{Linear}(mu_cst) - GradDiv{Linear,1,1}(graddiv_cst) - GradDiv{Linear,1,2}(graddiv_cst, v) + ScalarGrad{Linear,1}(one_cst, p)) == Source(src_u))
+L_v = ((- Laplacian{Linear}(mu_cst) - GradDiv{Linear,2,1}(graddiv_cst, u) - GradDiv{Linear,2,2}(graddiv_cst) + ScalarGrad{Linear,2}(one_cst, p)) == Source(src_v))
 L_p = ((- Laplacian{Linear}(tau_rc_cst) + VectorDiv{Linear,1}(one_cst, u) + VectorDiv{Linear,2}(one_cst, v)) == Source(0.0))
 
 sys = MonolithicSystem([L_u(u), L_v(v), L_p(p)], [u, v, p])
@@ -77,8 +81,8 @@ if GEOMETRY == :Channel; setReference!(sys.equations[3], 0.0, 1, config); end
 
 # ── 8. Loop ──
 @info "Starting Loop..."
-for step in 1:config.runtime.iterations
-    res = solve_monolithic!(sys, (u_bcs, v_bcs, p_bcs), config)
+for step in 1:nsteps
+    res = solve_monolithic!(sys, (u_bcs, v_bcs, p_bcs), config; reference=(3, 0.0, 1))
     if MODEL == :KelvinVoigt
         ∇u = Grad{Gauss}(u); uf = FaceScalarField(mesh_dev); ∇v = Grad{Gauss}(v); vf = FaceScalarField(mesh_dev)
         grad!(∇u, uf, u, u_bcs, nothing, config); grad!(∇v, vf, v, v_bcs, nothing, config)

@@ -88,8 +88,9 @@ config = Configuration(solvers=solvers, schemes=schemes,
 # ── 6. Monolithic Equations ───────────────────────────────────────────────────
 one_cst     = ConstantScalar(1.0)
 mu_s_cst    = ConstantScalar(mu_s_val)
-mu_eff_cst  = ConstantScalar(mu_p_val + G_val * dt) # η_eff for stress coupling
-two_mu_eff  = ConstantScalar(2.0 * (mu_p_val + G_val * dt))
+mu_eff_val  = mu_p_val + G_val * dt
+mu_eff_cst  = ConstantScalar(mu_eff_val)
+two_mu_eff  = ConstantScalar(2.0 * mu_eff_val)
 tau_rc_cst  = ConstantScalar(tau_rc_val)
 
 ∇u = Grad{Gauss}(u); uf = FaceScalarField(mesh_dev)
@@ -97,7 +98,9 @@ tau_rc_cst  = ConstantScalar(tau_rc_val)
 
 @info "Starting Kelvin-Voigt loop..."
 
-for step in 1:runtime.iterations
+mesh_writer = initialise_writer(VTK(), mesh_dev)
+
+for step in 1:config.runtime.iterations
     # 1. Momentum + Stress + Pressure (6-field system)
     L_u = ((
         - Laplacian{Linear}(mu_s_cst)
@@ -125,35 +128,36 @@ for step in 1:runtime.iterations
     L_txx = ((
         Si(one_cst)
         - ScalarGrad{Linear,1}(two_mu_eff, u)
-        == Source(ConstantScalar(G_val) * gxx)
+        == Source(XCALibre.ModelFramework.ScaledFlux(gxx, G_val))
     ) → BCs.txx) → solvers.txx
 
     L_tyy = ((
         Si(one_cst)
         - ScalarGrad{Linear,2}(two_mu_eff, v)
-        == Source(ConstantScalar(G_val) * gyy)
+        == Source(XCALibre.ModelFramework.ScaledFlux(gyy, G_val))
     ) → BCs.tyy) → solvers.tyy
 
     L_txy = ((
         Si(one_cst)
         - ScalarGrad{Linear,2}(mu_eff_cst, u)
         - ScalarGrad{Linear,1}(mu_eff_cst, v)
-        == Source(ConstantScalar(G_val) * gxy)
+        == Source(XCALibre.ModelFramework.ScaledFlux(gxy, G_val))
     ) → BCs.txy) → solvers.txy
 
     sys = MonolithicSystem([L_u(u), L_v(v), L_p(p), L_txx(txx), L_tyy(tyy), L_txy(txy)], [u, v, p, txx, tyy, txy])
-    setReference!(sys.equations[3], 0.0, 1, config)
-    res = solve_monolithic!(sys, (BCs.u, BCs.v, BCs.p, BCs.txx, BCs.tyy, BCs.txy), config)
+    res = solve_monolithic!(sys, (BCs.u, BCs.v, BCs.p, BCs.txx, BCs.tyy, BCs.txy), config; reference=(3, 0.0, 1))
 
     # 2. Update strain (gamma)
     grad!(∇u, uf, u, BCs.u, nothing, config)
     grad!(∇v, vf, v, BCs.v, nothing, config)
-    @. gxx.values += 2.0 * ∇u.result.x.values * dt
-    @. gyy.values += 2.0 * ∇v.result.y.values * dt
-    @. gxy.values += (∇u.result.y.values + ∇v.result.x.values) * dt
+    
+    # γ^{n+1} = γ^n + 2D Δt  => γ_xx += 2 ∂u/∂x Δt
+    gxx.values .+= 2.0 .* ∇u.x.values .* dt
+    gyy.values .+= 2.0 .* ∇v.y.values .* dt
+    gxy.values .+= (∇u.y.values .+ ∇v.x.values) .* dt
 
     @printf("Step %d, Residual: %.2e, max|u|: %.4f\n", step, res, maximum(abs.(u.values)))
 end
 
-save_output(u, "kv_incomp_u", 0.0, config)
+write_results(0, 0.0, mesh_dev, mesh_writer, BCs, ("u", u), ("v", v), ("p", p), ("txx", txx), ("tyy", tyy), ("txy", txy); suffix="_kv_incomp")
 @info "Benchmark kv_incomp finished."

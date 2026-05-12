@@ -202,10 +202,11 @@ GradDiv{T,I,J}(flux, phi) where {T,I,J} = Operator(flux, phi, 1, GradDiv{T,I,J}(
 # ---------------------------------------------------------------------------
 # ScalarGrad{T, I}
 #
-# Two-point FVM approximation of the I-th component of the gradient of a
-# scalar field φ: contributes ∂φ/∂x_I to any equation row.
+# Conservative Gauss FVM approximation of the I-th component of the
+# volume-integrated gradient of a scalar field φ.
 #
-# Face coefficient = flux[fID] * face.e[I] * face.area / face.delta
+# Face coefficient = flux[fID] * (outward face area vector)[I],
+# split by linear face interpolation.
 #
 # Typical use: pressure-gradient body force in momentum equations,
 # chemical-potential gradient in phase-field, etc.
@@ -222,11 +223,12 @@ ScalarGrad{T,I}(flux, phi) where {T,I} = Operator(flux, phi, 1, ScalarGrad{T,I}(
 # ---------------------------------------------------------------------------
 # VectorDiv{T, J}
 #
-# Two-point FVM approximation of the J-th partial derivative ∂u_J/∂x_J,
-# one component of the divergence of a vector field (u₁, u₂, …).
-# Contributes ∂u_J/∂x_J to any scalar equation row.
+# Conservative Gauss FVM approximation of the J-th volume-integrated partial
+# derivative ∂u_J/∂x_J, one component of the divergence of a vector field
+# (u₁, u₂, …).
 #
-# Face coefficient = flux[fID] * face.e[J] * face.area / face.delta
+# Face coefficient = flux[fID] * (outward face area vector)[J],
+# split by linear face interpolation.
 #
 # Typical use: ∇·u in continuity / pressure equations, incompressibility
 # constraints, Biot volumetric strain coupling, etc.
