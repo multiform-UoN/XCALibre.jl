@@ -76,10 +76,20 @@
 - Advective transport (`Divergence{Upwind}`) for tensor fields integrated and stabilised.
 - Validation hierarchy established (Stokes baseline $\rightarrow$ Maxwell $\rightarrow$ Oldroyd-B).
 - **Finding**: Rhie-Chow pressure stabilisation does not conflict with viscoelastic extra-stresses; checkerboard modes are successfully suppressed.
+- **Benchmark Suite**: A systematic `Stokes3x3` matrix created in `examples/nonNewtonian/benchmarks` exploring straight vs L-bend geometries and Neumann vs Pressure-driven BCs.
+- **Compressible Foundations**: Weakly compressible Stokes and Maxwell formulations verified. Rhie-Chow stabilization gracefully accommodates the $\beta p + \nabla \cdot u = 0$ continuity modifications.
 
 ---
 
 ## PENDING
+
+### Monolithic Periodic Boundary Conditions Redesign
+- **Current Limitation**: The existing `Periodic` BC directly mutates sparse matrix indices using `Atomix.@atomic nzval[spindex(...)]`. This works for scalar PDEs but corrupts the block-coupled matrix in a `MonolithicSystem` because it is unaware of the `row_offset` and `col_offset` block shifts.
+- **Required Design**:
+  - `(bc::Periodic)` evaluations must return *nonlocal matrix insertions*, rather than just local `(AP, BP)` face scalars.
+  - `monolithic_apply_bcs!` must intercept these insertions and apply the `row_off` and `col_off` shifts before injecting into the global `A_mono`.
+  - Operator-specific logic must be defined (e.g., how the pressure gradient links across the periodic boundary for `ScalarGrad` and `VectorDiv`).
+- **Implementation Path**: Do NOT rewrite the entire BC API globally yet. Introduce a specialized `apply_periodic_bcs_monolithic!` path as a transitional proof-of-concept before refactoring the core scalar API.
 
 ### GPU Newton / Enzyme Device Path
 - Current `linearize_physics` runs a scalar CPU loop over cell values

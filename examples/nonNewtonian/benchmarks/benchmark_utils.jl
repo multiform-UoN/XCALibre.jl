@@ -9,32 +9,8 @@ using Printf
 using Statistics
 using SparseArrays
 
-# ── Extension: Define CORRECT BC methods for ScalarGrad/VectorDiv ─────────────
-import XCALibre.Discretise: @define_boundary, AbstractDirichlet, AbstractNeumann, AbstractBoundary
 import XCALibre.ModelFramework: Operator, ScalarGrad, VectorDiv, Laplacian, Si, PDEOperator, Model, ModelEquation, ScalarModel, ScalarEquation
 import XCALibre.Solve: update_fields!, assemble_monolithic_system
-
-# Dirichlet for ScalarGrad: source = flux * n_I * area * bc.value
-@inline function (bc::Dirichlet)(term::Operator{F,P,I_OP,ScalarGrad{T,I}}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P,I_OP,T,I}
-    e_I = face.e[I]; ap = term.sign * term.flux[fID] * e_I * face.area / face.delta
-    return -ap, -ap*bc.value
-end
-
-# Zerogradient for ScalarGrad: ac = - (flux * n_I * area)
-@inline function (bc::Zerogradient)(term::Operator{F,P,I_OP,ScalarGrad{T,I}}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P,I_OP,T,I}
-    return 0.0, 0.0
-end
-
-# Dirichlet for VectorDiv: source = flux * n_J * area * bc.value
-@inline function (bc::Dirichlet)(term::Operator{F,P,I_OP,VectorDiv{T,J}}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P,I_OP,T,J}
-    e_J = face.e[J]; ap = term.sign * term.flux[fID] * e_J * face.area / face.delta
-    return -ap, -ap*bc.value
-end
-
-# Zerogradient for VectorDiv: ac = - (flux * n_J * area)
-@inline function (bc::Zerogradient)(term::Operator{F,P,I_OP,VectorDiv{T,J}}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P,I_OP,T,J}
-    return 0.0, 0.0
-end
 
 function get_sparse_matrix(A_csr)
     I_row = Vector{Int64}(undef, length(A_csr.nzval))
