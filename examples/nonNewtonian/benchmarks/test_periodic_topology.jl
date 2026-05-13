@@ -1,28 +1,12 @@
-# =============================================================================
-# Benchmark Utilities for Non-Newtonian Comparison Suite — XCALibre.jl
-# =============================================================================
-
 using XCALibre
-using Accessors
 using LinearAlgebra
 using Printf
-using Statistics
 using SparseArrays
-
-import XCALibre.ModelFramework: Operator, ScalarGrad, VectorDiv, Laplacian, Si, PDEOperator, Model, ModelEquation, ScalarModel, ScalarEquation
-import XCALibre.Solve: update_fields!, assemble_monolithic_system
-
 using StaticArrays
 
-function get_sparse_matrix(A_csr)
-    I_row = Vector{Int64}(undef, length(A_csr.nzval))
-    for r in 1:(length(A_csr.rowptr)-1)
-        for i in A_csr.rowptr[r]:(A_csr.rowptr[r+1]-1)
-            I_row[i] = r
-        end
-    end
-    return sparse(I_row, A_csr.colval, A_csr.nzval, size(A_csr)...)
-end
+include("benchmark_utils.jl")
+
+mesh_cpu, _ = get_straight_mesh()
 
 function make_periodic_topology(mesh::Mesh2, patch1::Symbol, patch2::Symbol, translation::AbstractVector)
     b_idx1 = findfirst(x -> x.name == patch1, mesh.boundaries)
@@ -111,29 +95,53 @@ function make_periodic_topology(mesh::Mesh2, patch1::Symbol, patch2::Symbol, tra
     return new_mesh
 end
 
-function create_meqn(model, phi, bcs, setup)
-    ModelEquation(ScalarModel(), model, ScalarEquation(phi, bcs), setup.solver, setup.preconditioner, setup)
-end
+mesh_per = make_periodic_topology(mesh_cpu, :inlet, :outlet, [25.0, 0.0, 0.0])
+mesh_dev = adapt(CPU(), mesh_per)
 
-function get_straight_mesh()
-    grids_dir = pkgdir(XCALibre, "examples", "0_GRIDS")
-    mesh = UNV2D_mesh(joinpath(grids_dir, "quad40.unv"), scale=0.025)
-    return mesh, adapt(CPU(), mesh)
-end
+u = ScalarField(mesh_dev); initialise!(u, 0.0)
+v = ScalarField(mesh_dev); initialise!(v, 0.0)
+p = ScalarField(mesh_dev); initialise!(p, 0.0)
 
-function get_bend_mesh()
-    mesh_dir = "/Volumes/OpenFOAM/mixed_viscoelasticity/openfoam_cases/stokes3plus3_bend/viscoelasticChannelBend_stokes_compressibleSolid_KelvinVoigt/constant/polyMesh"
-    mesh = FOAM3D_mesh(mesh_dir, scale=1.0)
-    return mesh, adapt(CPU(), mesh)
-end
+# Provide Empty BC for inlet and outlet, so standard BC loop ignores them.
+BCs = assign(
+    region = mesh_dev,
+    (
+        u = [Dirichlet(:top, 0.0), Dirichlet(:bottom, 0.0), Empty(:inlet), Empty(:outlet)],
+        v = [Dirichlet(:top, 0.0), Dirichlet(:bottom, 0.0), Empty(:inlet), Empty(:outlet)],
+        p = [Zerogradient(:top), Zerogradient(:bottom), Empty(:inlet), Empty(:outlet)],
+    )
+)
 
-function report_results(name, res, u, p, tau=nothing)
-    u_max = maximum(abs.(u.values))
-    p_max = maximum(abs.(p.values))
-    if tau !== nothing
-        tau_max = maximum(abs.(tau.values))
-        @printf("[%s] Residual: %.2e | max|u|: %.4e | max|p|: %.4e | max|tau|: %.4e\n", name, res, u_max, p_max, tau_max)
-    else
-        @printf("[%s] Residual: %.2e | max|u|: %.4e | max|p|: %.4e\n", name, res, u_max, p_max)
-    end
-end
+solvers = (
+    u = SolverSetup(solver=Gmres(), preconditioner=Jacobi(), convergence=1e-10, relax=1.0),
+    v = SolverSetup(solver=Gmres(), preconditioner=Jacobi(), convergence=1e-10, relax=1.0),
+    p = SolverSetup(solver=Gmres(), preconditioner=Jacobi(), convergence=1e-10, relax=1.0),
+)
+config = Configuration(solvers=solvers, schemes=(u=Schemes(), v=Schemes(), p=Schemes()),
+                       runtime=Runtime(iterations=1, write_interval=-1, time_step=1.0), hardware=Hardware(backend=CPU(), workgroup=1024), boundaries=BCs)
+
+mu_cst = ConstantScalar(1.0)
+one_cst = ConstantScalar(1.0)
+tau_rc_cst = ConstantScalar(0.1)
+
+L_u = ((- Laplacian{XCALibre.Linear}(mu_cst) + ScalarGrad{XCALibre.Linear,1}(one_cst, p) == Source(1.0)) → BCs.u) → solvers.u
+L_v = ((- Laplacian{XCALibre.Linear}(mu_cst) + ScalarGrad{XCALibre.Linear,2}(one_cst, p) == Source(0.0)) → BCs.v) → solvers.v
+L_p = ((- Laplacian{XCALibre.Linear}(tau_rc_cst) + VectorDiv{XCALibre.Linear,1}(one_cst, u) + VectorDiv{XCALibre.Linear,2}(one_cst, v) == Source(0.0)) → BCs.p) → solvers.p
+
+sys = MonolithicSystem([L_u(u), L_v(v), L_p(p)], [u, v, p])
+
+@info "Assembling..."
+A_csr, b_mono = assemble_monolithic_system(sys, (BCs.u, BCs.v, BCs.p), config)
+A_julia = get_sparse_matrix(A_csr)
+
+# Pin pressure
+p_row = 2 * length(mesh_dev.cells) + 1
+A_julia[p_row, :] .= 0.0
+A_julia[p_row, p_row] = 1.0
+b_mono[p_row] = 0.0
+
+@info "Solving..."
+x = A_julia \ b_mono
+XCALibre.Solve.update_fields!(sys, x)
+
+report_results("Topological Periodic Stokes", norm(A_julia*x - b_mono), u, p)
