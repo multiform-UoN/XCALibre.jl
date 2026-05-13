@@ -1,6 +1,81 @@
 export solve_monolithic!, newton_solve!, monolithic_residual!, set_fields!, update_fields!
 export apply_monolithic_reference!
 
+function _monolithic_solver_setup(config, use_preconditioner)
+    config.solvers === nothing && return (solver=Gmres(), preconditioner=nothing)
+    setup = first(config.solvers)
+    setup === nothing && return (solver=Gmres(), preconditioner=nothing)
+    preconditioner = use_preconditioner ? setup.preconditioner : nothing
+    return (solver=setup.solver, preconditioner=preconditioner)
+end
+
+function _monolithic_preconditioner(preconditioner_type, A_op, mesh, config)
+    preconditioner_type === nothing && return (M=I, ldiv=false, storage=nothing)
+
+    P = Preconditioner{typeof(preconditioner_type)}(A_op)
+    update_preconditioner!(P, mesh, config)
+    return (M=P.P, ldiv=is_ldiv(P), storage=P)
+end
+
+function _monolithic_step_stats(ws, iter, res, true_residual, relative_true_residual)
+    residuals = ws.stats.residuals
+    first_residual = isempty(residuals) ? oftype(res, NaN) : first(residuals)
+    return (
+        outer_iteration=iter,
+        solved=ws.stats.solved,
+        gmres_iterations=Krylov.iteration_count(ws),
+        first_residual=first_residual,
+        final_residual=res,
+        true_residual=true_residual,
+        relative_true_residual=relative_true_residual,
+    )
+end
+
+function _safe_inv_scale(v, floor_value)
+    return v > floor_value ? inv(v) : one(v)
+end
+
+function _equilibrate_csr!(A_csr::SparseMatricesCSR.SparseMatrixCSR, b)
+    TF = eltype(A_csr.nzval)
+    col_scale = zeros(TF, A_csr.n)
+    floor_value = eps(TF)
+
+    @inbounds for row in 1:A_csr.m
+        row_norm = zero(TF)
+        for nzi in A_csr.rowptr[row]:(A_csr.rowptr[row + 1] - 1)
+            row_norm += abs(A_csr.nzval[nzi])
+        end
+        scale = _safe_inv_scale(row_norm, floor_value)
+        b[row] *= scale
+        for nzi in A_csr.rowptr[row]:(A_csr.rowptr[row + 1] - 1)
+            A_csr.nzval[nzi] *= scale
+            col_scale[A_csr.colval[nzi]] += abs(A_csr.nzval[nzi])
+        end
+    end
+
+    @. col_scale = ifelse(col_scale > floor_value, inv(col_scale), one(TF))
+    @inbounds for row in 1:A_csr.m
+        for nzi in A_csr.rowptr[row]:(A_csr.rowptr[row + 1] - 1)
+            A_csr.nzval[nzi] *= col_scale[A_csr.colval[nzi]]
+        end
+    end
+
+    return col_scale
+end
+
+function _csr_residual_norm(A_csr::SparseMatricesCSR.SparseMatrixCSR, x, b, nzval=A_csr.nzval)
+    accum = zero(eltype(x))
+    @inbounds for row in 1:A_csr.m
+        ax = zero(eltype(x))
+        for nzi in A_csr.rowptr[row]:(A_csr.rowptr[row + 1] - 1)
+            ax += nzval[nzi] * x[A_csr.colval[nzi]]
+        end
+        r = ax - b[row]
+        accum += r * r
+    end
+    return sqrt(accum)
+end
+
 function _build_monolithic_sparsity(n_vars, n_cells, mesh, TF)
     I_idx = Int[]
     J_idx = Int[]
@@ -137,11 +212,16 @@ end
 """
     solve_monolithic!(sys::MonolithicSystem, bcs_list, config)
 """
-function solve_monolithic!(sys::MonolithicSystem, bcs_list, config; reference=nothing)
+function solve_monolithic!(
+    sys::MonolithicSystem, bcs_list, config;
+    reference=nothing, diagnostics=false, use_preconditioner=false, equilibrate=false,
+    itmax=5000, atol=1e-12, rtol=1e-10
+)
     (; hardware, runtime) = config
     TF = _get_float(sys.phi_list[1].mesh)
     iterations = runtime.iterations
     N = sys.n_vars * sys.n_cells
+    mesh = sys.phi_list[1].mesh
     
     # 1. Decompose BCs if they are still in vector form
     flat_bcs = []
@@ -162,28 +242,52 @@ function solve_monolithic!(sys::MonolithicSystem, bcs_list, config; reference=no
     
     b_mono = zeros(TF, N)
     # Heuristic: use the solver from the first field for the monolithic system.
+    # Monolithic preconditioning is opt-in because scalar field preconditioners
+    # are not automatically good preconditioners for saddle-point block systems.
     # Some low-level unit tests construct a minimal Configuration with no
-    # per-field solver setup; GMRES is the safest default for block systems.
-    solver_type = config.solvers === nothing ? Gmres() : first(config.solvers).solver
+    # per-field solver setup; GMRES with no preconditioner is the safest default.
+    setup = _monolithic_solver_setup(config, use_preconditioner)
+    solver_type = setup.solver
     ws = _workspace(solver_type, b_mono)
     
     res = TF(NaN)
+    stats_history = []
     for iter in 1:iterations
         A_csr, b_mono = assemble_monolithic_system(sys, bcs_list, config)
         _apply_reference_argument!(A_csr, b_mono, sys, reference)
-        A_op = SparseXCSR(A_csr)
 
-        krylov_solve!(ws, A_op, b_mono; atol=1e-12, rtol=1e-10, itmax=5000, history=true)
+        original_nzval = diagnostics && equilibrate ? copy(A_csr.nzval) : nothing
+        original_b = diagnostics && equilibrate ? copy(b_mono) : nothing
+        col_scale = equilibrate ? _equilibrate_csr!(A_csr, b_mono) : nothing
+
+        A_op = SparseXCSR(A_csr)
+        precon = _monolithic_preconditioner(setup.preconditioner, A_op, mesh, config)
+        x0 = extract_global_vector(sys)
+        krylov_x0 = equilibrate ? x0 ./ col_scale : x0
+
+        krylov_solve!(
+            ws, A_op, b_mono, krylov_x0;
+            M=precon.M, ldiv=precon.ldiv, atol=atol, rtol=rtol,
+            itmax=itmax, history=true
+        )
 
         if !ws.stats.solved
             @warn "Monolithic $(typeof(solver_type)) iter=$iter: did not converge (niter=$(Krylov.iteration_count(ws)))"
         end
 
-        set_fields!(sys, ws.x)
+        x_solution = equilibrate ? col_scale .* ws.x : ws.x
+        set_fields!(sys, x_solution)
         res = isempty(ws.stats.residuals) ? TF(NaN) : TF(ws.stats.residuals[end])
+        if diagnostics
+            true_b = original_b === nothing ? b_mono : original_b
+            true_nzval = original_nzval === nothing ? A_csr.nzval : original_nzval
+            true_residual = _csr_residual_norm(A_csr, x_solution, true_b, true_nzval)
+            relative_true_residual = true_residual / max(norm(true_b), eps(TF))
+            push!(stats_history, _monolithic_step_stats(ws, iter, res, true_residual, relative_true_residual))
+        end
     end
 
-    return res
+    return diagnostics ? (residual=res, linear=stats_history) : res
 end
 
 """
@@ -204,7 +308,8 @@ function newton_solve!(
     N = n_vars * n_cells
 
     # Heuristic: use the solver from the first field for the monolithic system.
-    solver_type = config.solvers === nothing ? Gmres() : first(config.solvers).solver
+    setup = _monolithic_solver_setup(config, false)
+    solver_type = setup.solver
     ws = _workspace(solver_type, zeros(TF, N))
 
     for iter in 1:maxiter
@@ -241,8 +346,13 @@ function newton_solve!(
         
         # 4. Solve the linear system
         A_op = SparseXCSR(A_homo)
+        precon = _monolithic_preconditioner(setup.preconditioner, A_op, sys.phi_list[1].mesh, config)
         # Using a very tight inner tolerance for the Newton step
-        krylov_solve!(ws, A_op, b_homo; atol=1e-12, rtol=1e-10, itmax=5000, history=true)
+        krylov_solve!(
+            ws, A_op, b_homo;
+            M=precon.M, ldiv=precon.ldiv, atol=1e-12, rtol=1e-10,
+            itmax=5000, history=true
+        )
         
         if !ws.stats.solved
             @warn "Monolithic Newton inner $(typeof(solver_type)) did not converge (niter=$(Krylov.iteration_count(ws)))"

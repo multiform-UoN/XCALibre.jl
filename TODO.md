@@ -84,12 +84,23 @@
 ## PENDING
 
 ### Monolithic Periodic Boundary Conditions Redesign
-- **Current Limitation**: The existing `Periodic` BC directly mutates sparse matrix indices using `Atomix.@atomic nzval[spindex(...)]`. This works for scalar PDEs but corrupts the block-coupled matrix in a `MonolithicSystem` because it is unaware of the `row_offset` and `col_offset` block shifts.
-- **Required Design**:
-  - `(bc::Periodic)` evaluations must return *nonlocal matrix insertions*, rather than just local `(AP, BP)` face scalars.
-  - `monolithic_apply_bcs!` must intercept these insertions and apply the `row_off` and `col_off` shifts before injecting into the global `A_mono`.
-  - Operator-specific logic must be defined (e.g., how the pressure gradient links across the periodic boundary for `ScalarGrad` and `VectorDiv`).
-- **Implementation Path**: Do NOT rewrite the entire BC API globally yet. Introduce a specialized `apply_periodic_bcs_monolithic!` path as a transitional proof-of-concept before refactoring the core scalar API.
+- **Current Limitation**: The existing `Periodic` BC is scalar-oriented. Its sparse connectivity extension assumes `global row == cell id`, which is not true for monolithic block systems where pressure/stress/auxiliary fields live at block offsets. Algebraic post-assembly correction can be made to work by applying row/column offsets, but it becomes fragile because every operator (`Laplacian`, `ScalarGrad`, `VectorDiv`, upwind transport, Rhie-Chow terms) needs its own periodic insertion semantics.
+- **Preferred Long-Term Design**: Periodicity should be mesh topology, not boundary-condition algebra. Periodic patch pairs should be converted into internal-face-like owner/neighbour connections during mesh construction or an explicit mesh-finalisation pass.
+- **Mesh Data Changes Needed**:
+  - Add periodic face-pair records that store owner cell, periodic neighbour cell, master/slave face ids, orientation/sign, and the geometric transform from owner to periodic neighbour.
+  - Extend `cell_faces`, `cell_neighbours`, `cell_nsign`, and each cell `faces_range` so periodic connections appear in the same loops as internal faces.
+  - Preserve patch metadata for user-facing BC assignment and output, but exclude rewired periodic faces from ordinary boundary-condition application.
+  - Compute periodic geometry (`delta`, interpolation weights, non-orthogonal correction vectors, transformed centre-to-centre vector) using the periodic transform rather than the physical unshifted coordinates.
+- **Sparsity Requirement**: Sparse allocation must see periodic owner/neighbour pairs before matrix construction. Both scalar equation matrices and monolithic block matrices must allocate `(owner, periodic_neighbour)` and reciprocal entries; monolithic offsets then fall out naturally from the existing block sparsity builder.
+- **Operators That Become Periodic-Safe Automatically**: Interior-face implementations of `Laplacian`, `Divergence`, `ScalarGrad`, `VectorDiv`, `GradDiv`, source-free cross-field couplings, and monolithic block assembly should work without periodic-specific sparse mutation once periodic faces are traversed as internal connections.
+- **Remaining Delicate Areas**:
+  - Rhie-Chow / pressure-Laplacian stabilisation must use periodic face distances and transformed pressure gradients consistently.
+  - Upwind transport must choose owner/neighbour states using the periodic face flux orientation and transform vector/tensor components where needed.
+  - Non-orthogonal corrections must use periodic centre-to-centre vectors, not physical patch separation.
+  - Vector/tensor fields may need rotational transforms, not only translational pairing.
+  - MPI/domain decomposition must either create periodic ghost cells or include periodic neighbour ownership in halo exchange and sparsity ownership.
+  - VTK/OpenFOAM output should retain patch identity even if solver topology treats the faces as internal.
+- **Transitional Option**: A post-assembly periodic correction can be used only as a narrow proof-of-concept for scalar operators. It should not become the main monolithic design because it duplicates operator logic and is easy to break with block offsets.
 
 ### GPU Newton / Enzyme Device Path
 - Current `linearize_physics` runs a scalar CPU loop over cell values
