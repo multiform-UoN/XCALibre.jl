@@ -102,6 +102,13 @@
   - VTK/OpenFOAM output should retain patch identity even if solver topology treats the faces as internal.
 - **Transitional Option**: A post-assembly periodic correction can be used only as a narrow proof-of-concept for scalar operators. It should not become the main monolithic design because it duplicates operator logic and is easy to break with block offsets.
 
+### Direct Solver Diagnostics (Completed)
+- Diagnostics run using Julia's sparse `\` (UMFPACK) on the unstructured 9440-cell L-bend mesh confirmed the PDE assembly is correct, and isolated the slow Krylov convergence in Maxwell to an iterative conditioning problem.
+  - *Stokes-like ($\mu_s=1, \mu_p=0$)*: Direct solve 1.18s, max|u| 0.124.
+  - *Oldroyd-B-like ($\mu_s=1, \mu_p=1$)*: Direct solve 0.20s, max|u| 0.064.
+  - *Maxwell ($\mu_s=10^{-6}, \mu_p=1$)*: Direct solve 5.88s, max|u| 0.148.
+- **Conclusion**: The monolithic block-coupled equations are physically and algebraically valid. The stiffness introduced by the near-zero solvent viscosity in Maxwell cases makes simple GMRES+Jacobi struggle. Direct solvers provide an excellent verification mode for benchmark-scale domains without requiring advanced preconditioning research.
+
 ### GPU Newton / Enzyme Device Path
 - Current `linearize_physics` runs a scalar CPU loop over cell values
 - Enzyme device-side AD (kernel-level) needed for GPU Newton
