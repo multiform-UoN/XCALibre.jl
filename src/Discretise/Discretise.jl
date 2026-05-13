@@ -24,10 +24,10 @@ include("Discretise_1_schemes.jl")
 include("Discretise_2_generated_distretisation.jl")
 include("Discretise_3_boundary_conditions.jl")
 include("Discretise_4_assign_boundaries.jl")
+include("Discretise_5_apply_bcs.jl")
 include("Discretise_6_monolithic.jl")
 include("Discretise_7_boundary_actions.jl")
 include("boundary_conditions/boundary_actions.jl")
-
 
 include("boundary_conditions/0_definition_macro.jl")
 include("boundary_conditions/1_boundary_interpolation.jl")
@@ -67,7 +67,5 @@ include("boundary_conditions/high_order.jl")
 include("boundary_conditions/affine.jl")
 include("boundary_conditions/graddiv.jl")
 include("boundary_conditions/scalargrad_vectordiv.jl")
-
-include("Discretise_6_monolithic.jl")
 
 end
