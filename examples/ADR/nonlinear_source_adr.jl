@@ -1,6 +1,5 @@
 using XCALibre
 using LinearAlgebra
-using Accessors
 using Printf
 using Statistics
 
@@ -83,49 +82,34 @@ interpolate!(model.momentum.Uf, model.momentum.U, config)
 flux!(mdotf, model.momentum.Uf, config)
 gamma = ConstantScalar(1e-4)
 
-# Build Equation using the new NonLinearSi operator
-# This stores the function and is linearized inside the loop.
-C_eqn_template = (
-      Divergence{schemes.C.divergence}(mdotf, C)
-    - Laplacian{schemes.C.laplacian}(gamma, C)
-    + NonLinearSi(reaction_func, C)  # <--- NEW OPERATOR
+# Build the operator once. NonLinearSi is a field-free template here; it is
+# bound to C below and Newton-linearised by linearize_physics each iteration.
+L_C = ((
+      Divergence{schemes.C.divergence}(mdotf)
+    - Laplacian{schemes.C.laplacian}(gamma)
+    + NonLinearSi(reaction_func)
     ==
     Source(ConstantScalar(0.0))
-) → ScalarEquation(C, BCs.C)
+    ) → BCs.C) → solvers.C
 
-# Initialise solver
-@reset C_eqn_template.preconditioner = set_preconditioner(solvers.C.preconditioner, C_eqn_template)
-@reset C_eqn_template.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C_eqn_template))
+C_eqn = L_C(C)
 
 @info "Solving Non-Linear Implicit Source ADR..."
-# Choose AD backend: :forwarddiff or :enzyme
-ad_backend = :enzyme 
+last_res = Ref(Inf)
+for iter in 1:100
+    # NonLinearSi remains in the equation template. The Newton pre-pass converts
+    # it to an affine implicit source plus explicit offset for the current C.
+    C_bcs, linear_eqn, _ = linearize_physics(BCs.C, C_eqn; susp=true, ad_backend=:forwarddiff)
+    iter_res = solve_equation!(linear_eqn, C, C_bcs, solvers.C, config)
+    last_res[] = iter_res
 
-total_time = 0.0
-for i in 1:100
-    global total_time
-    # 6.1 AUTOMATIC LINEARIZATION
-    iter_start = time_ns()
-
-    updated_bcs, C_eqn = linearize_physics(BCs, C_eqn_template; susp=true, ad_backend=ad_backend)
-
-    # 6.2 Solve
-    res = solve_equation!(C_eqn, C, updated_bcs.C, solvers.C, config)
-
-    iter_end = time_ns()
-    iter_time = (iter_end - iter_start) / 1e9
-    total_time += iter_time
-
-    if i % 10 == 0
-        @printf("Iteration %d, C Res: %.2e, Mean C: %.4f, Time: %.4fs\n", 
-                i, res, mean(C.values), iter_time)
+    if iter % 10 == 0 || iter_res < solvers.C.convergence
+        @printf("Iteration %d, C residual %.2e, mean C %.4f\n", iter, iter_res, mean(C.values))
     end
-
-    if res < solvers.C.convergence
-        @info "Converged at iteration $i"
-        break
-    end
+    iter_res < solvers.C.convergence && break
 end
+
+@printf("NonLinearSi ADR: final residual=%.2e, mean C=%.4f\n", last_res[], mean(C.values))
 
 @info "Non-linear Source ADR example completed!"
 

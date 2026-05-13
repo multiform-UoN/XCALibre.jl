@@ -12,8 +12,6 @@ using SparseArrays
 import XCALibre.ModelFramework: Operator, ScalarGrad, VectorDiv, Laplacian, Si, PDEOperator, Model, ModelEquation, ScalarModel, ScalarEquation
 import XCALibre.Solve: update_fields!, assemble_monolithic_system
 
-using StaticArrays
-
 function get_sparse_matrix(A_csr)
     I_row = Vector{Int64}(undef, length(A_csr.nzval))
     for r in 1:(length(A_csr.rowptr)-1)
@@ -24,91 +22,12 @@ function get_sparse_matrix(A_csr)
     return sparse(I_row, A_csr.colval, A_csr.nzval, size(A_csr)...)
 end
 
-function make_periodic_topology(mesh::Mesh2, patch1::Symbol, patch2::Symbol, translation::AbstractVector)
-    b_idx1 = findfirst(x -> x.name == patch1, mesh.boundaries)
-    b_idx2 = findfirst(x -> x.name == patch2, mesh.boundaries)
-    
-    faces1_range = mesh.boundaries[b_idx1].IDs_range
-    faces2_range = mesh.boundaries[b_idx2].IDs_range
+function make_periodic_topology(mesh::Mesh2, patch1::Symbol, patch2::Symbol, translation::AbstractVector; tol=1e-5)
+    return XCALibre.Mesh.construct_periodic_topology(mesh, patch1, patch2, translation; tol=tol)
+end
 
-    centers1 = [mesh.faces[id].centre for id in faces1_range]
-    centers2 = [mesh.faces[id].centre for id in faces2_range]
-
-    tol = 1e-5
-    face_map = Dict{Int, Int}()
-    for (i, c1) in enumerate(centers1)
-        expected_c2 = c1 + translation
-        for (j, c2) in enumerate(centers2)
-            if norm(expected_c2 - c2) < tol
-                face_map[faces1_range[i]] = faces2_range[j]
-                break
-            end
-        end
-    end
-    
-    @info "Found $(length(face_map)) periodic face pairs between $patch1 and $patch2"
-
-    new_faces = copy(mesh.faces)
-    new_cell_faces = Int[]
-    new_cell_neighbours = Int[]
-    new_cell_nsign = Int[]
-    new_cells = empty(mesh.cells)
-    
-    cell_new_faces = Dict{Int, Vector{Tuple{Int, Int, Int}}}()
-    for i in 1:length(mesh.cells)
-        cell_new_faces[i] = Tuple{Int, Int, Int}[]
-    end
-    
-    current_fID = length(mesh.faces) + 1
-    
-    for (f1, f2) in face_map
-        face1 = mesh.faces[f1]
-        face2 = mesh.faces[f2]
-        
-        owner1 = face1.ownerCells[1]
-        owner2 = face2.ownerCells[1]
-        
-        C1 = mesh.cells[owner1].centre
-        C2_eff = mesh.cells[owner2].centre - translation
-        
-        d = C2_eff - C1
-        delta = norm(d)
-        e = d / delta
-        
-        new_face = Face2D(face1.nodes_range, SVector(owner1, owner2), face1.centre, face1.normal, e, face1.area, delta, 0.5)
-        push!(new_faces, new_face)
-        
-        push!(cell_new_faces[owner1], (current_fID, owner2, 1))
-        push!(cell_new_faces[owner2], (current_fID, owner1, -1))
-        current_fID += 1
-    end
-    
-    for cID in 1:length(mesh.cells)
-        cell = mesh.cells[cID]
-        start_idx = length(new_cell_faces) + 1
-        
-        for fi in cell.faces_range
-            fID = mesh.cell_faces[fi]
-            if !haskey(face_map, fID) && !(fID in values(face_map))
-                push!(new_cell_faces, mesh.cell_faces[fi])
-                push!(new_cell_neighbours, mesh.cell_neighbours[fi])
-                push!(new_cell_nsign, mesh.cell_nsign[fi])
-            end
-        end
-        
-        for (fID, nID, nsign) in cell_new_faces[cID]
-            push!(new_cell_faces, fID)
-            push!(new_cell_neighbours, nID)
-            push!(new_cell_nsign, nsign)
-        end
-        
-        stop_idx = length(new_cell_faces)
-        new_faces_range = start_idx:stop_idx
-        push!(new_cells, Cell(cell.centre, cell.volume, cell.nodes_range, new_faces_range))
-    end
-    
-    new_mesh = Mesh2(new_cells, mesh.cell_nodes, new_cell_faces, new_cell_neighbours, new_cell_nsign, new_faces, mesh.face_nodes, mesh.boundaries, mesh.nodes, mesh.node_cells, mesh.get_float, mesh.get_int, mesh.boundary_cellsID)
-    return new_mesh
+function make_periodic_topology(mesh::Mesh3, patch1::Symbol, patch2::Symbol, translation::AbstractVector; tol=1e-5)
+    return XCALibre.Mesh.construct_periodic_topology(mesh, patch1, patch2, translation; tol=tol)
 end
 
 function create_meqn(model, phi, bcs, setup)

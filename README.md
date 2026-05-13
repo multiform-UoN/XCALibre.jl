@@ -60,7 +60,7 @@ pkg> add XCALibre https://github.com/mberto79/XCALibre.jl.git#dev-0.3-main
 * Multithreaded or GPU execution with support for multiple GPU backends  (NVidia, AMD and Intel) - as supported by [KernelAbstractions.jl](https://juliagpu.github.io/KernelAbstractions.jl/stable/) (except Apple hardware)
 * Ability to import *.unv* and OpenFOAM grids. Simulation results written in `VTK` or `OpenFOAM` file formats, allowing postprocessing in [ParaView](https://www.paraview.org/)
 * Incompressible and (weakly) compressible flow solvers
-* Viscoelastic and Non-Newtonian flows (Maxwell, Kelvin-Voigt, Oldroyd-B) via monolithic block-coupled $(u, p, \tau)$ formulation
+* Viscoelastic and Non-Newtonian flows (Maxwell, Kelvin-Voigt, Oldroyd-B prototypes) via monolithic block-coupled $(u, p, \tau)$ formulation
 * RANS and LES turbulence modelling (`KOmega` and `KOmegaLKE` for RANS and `Smagorinsky` for LES, for now!)
 * Energy modelling using Sensible Energy model
 * Classic boundary conditions, including Dirichlet, Neumann, Wall, Symmetry, etc.
@@ -126,7 +126,7 @@ If you have used XCALibre.jl in your work, please cite it using the reference be
 
 ## multiform-UoN Fork New Features
 
-This fork extends XCALibre.jl with capabilities for nonlinear physics, coupled multi-field solvers, and a higher-level PDE abstraction layer.
+This fork extends XCALibre.jl with capabilities for nonlinear physics, coupled multi-field solvers, and a higher-level PDE abstraction layer. The emphasis is on keeping finite-volume operators explicit and inspectable while reducing bookkeeping in multi-physics examples.
 
 ### Operator-First PDE DSL
 
@@ -170,7 +170,19 @@ sys = MonolithicSystem([u_eqn, v_eqn], [u, v])
 solve_monolithic!(sys, (BCs.u, BCs.v), config)
 ```
 
-Used for linear elasticity, Cahn-Hilliard phase field, and multi-species transport.
+Used for linear elasticity, Cahn-Hilliard phase field, multi-species transport, and the current incompressible/weakly-compressible viscoelastic prototypes. The practical viscoelastic path uses the conventional $(u,p,\tau)$ split, with pressure retained and $\tau$ treated as extra stress. Rhie-Chow-style pressure stabilisation is available for collocated Stokes/viscoelastic systems; difficult bend Maxwell cases are currently understood as conditioning/preconditioning problems rather than assembly failures.
+
+### Topology-First Periodicity
+
+Periodic patch pairs can be rewired into internal-face-like owner/neighbour connections before assembly:
+
+```julia
+mesh_periodic = XCALibre.Mesh.construct_periodic_topology(
+    mesh, :inlet, :outlet, [Lx, 0.0, 0.0]
+)
+```
+
+This avoids post-assembly sparse-matrix surgery and naturally respects monolithic block offsets. Once periodic faces appear in the same connectivity loops as ordinary internal faces, operators such as `Laplacian`, `Divergence`, `ScalarGrad`, `VectorDiv`, and monolithic sparsity allocation do not need separate scalar-specific periodic code. The current implementation is a translational prototype; rotational transforms, vector/tensor component transforms, non-orthogonal corrections, output metadata, and MPI/domain-decomposition support still need careful review.
 
 ### GradDiv Operator for Elasticity
 
@@ -202,6 +214,20 @@ r = residual(L, phi, config)           # mathematical residual vector Au - b
 explicit_residual!(r, eqn, phi, config) # matrix-free residual kernel (JFNK foundation)
 ```
 
+### Residual/Jacobian Boundary Actions (Experimental)
+
+Boundary conditions are being explored as residual contributions,
+
+```math
+\mathcal{B}(u) = 0,
+```
+
+that provide explicit Jacobian/RHS actions during Newton assembly. This is useful for nonlinear Robin-type conditions and for separating BC semantics from matrix storage layout. The current examples remain prototypes under `examples/operatorBC/`: `fv_residual_bc_laplacian.jl` applies a residual/Jacobian boundary row to a real FV Laplacian, while `boundary_action_sketch.jl` and `residual_bc_sketch.jl` show the smaller action vocabulary. This direction should not be treated as a production GPU implementation yet; dynamic action lists and sparse row mutation would need to be lowered to static, allocation-free kernels for performance-sensitive paths.
+
+### HPC and GPU Position
+
+The fork aims to preserve GPU-compatible architecture: explicit operators, topology-level connectivity, backend-neutral residual concepts, and matrix-free residual hooks. That is different from claiming that all new abstractions are already GPU efficient. Current nonlinear linearisation and exploratory BC-action examples are CPU-oriented; device kernels, allocation behaviour, and dispatch boundaries must be audited before promoting these paths to production GPU workflows.
+
 ### Extended Post-Processing and Homogenisation
 
 Volume averaging, permeability tensor computation (2D/3D), and dispersivity optimisation for porous media upscaling. See `examples/homogenisation/`.
@@ -211,13 +237,16 @@ Volume averaging, permeability tensor computation (2D/3D), and dispersivity opti
 | Example | Feature demonstrated |
 |---|---|
 | `ADR/adr_scalar.jl` | PDEOperator DSL, Robin BC, full SIMPLE + scalar transport |
-| `ADR/nonlinear_adr.jl` | Newton solve of nonlinear ADR |
+| `ADR/nonlinear_adr.jl` | Operator-first ADR with Newton-linearised nonlinear Robin BC |
+| `ADR/nonlinear_source_adr.jl` | Operator-first ADR with Newton-linearised implicit nonlinear source |
 | `ADR/monolithic_quad_laplacian.jl` | Block-coupled monolithic solve |
 | `linearElastic/linear_elastic_2d.jl` | 2-field monolithic elasticity via GradDiv |
 | `phaseField/cahn_hilliard_monolithic.jl` | Biharmonic + monolithic Cahn-Hilliard |
 | `thinFilm/thin_film_multiform.jl` | Coupled thin-film (viscous + Darcy) |
 | `homogenisation/permeability_tensor_2d.jl` | Upscaled permeability from pore-scale DNS |
-| `poroelastic/biot_consolidation_1d.jl` | Biot consolidation: elastic MonolithicSystem + transient pressure PDEOperator |
+| `linearElastic/biot_consolidation_1d.jl` | Biot consolidation: elastic MonolithicSystem + transient pressure PDEOperator |
+| `nonNewtonian/benchmarks/straight/stokes_periodic.jl` | Topology-first periodic Stokes assembly |
+| `operatorBC/fv_residual_bc_laplacian.jl` | Experimental residual/Jacobian BC action on a real FV operator |
+| `operatorBC/topological_periodic_stokes.jl` | Periodicity as mesh topology, not sparse matrix surgery |
 
 See `examples/` for full usage and `TODO.md` for the development roadmap.
-

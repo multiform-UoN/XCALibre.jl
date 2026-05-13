@@ -4,7 +4,6 @@ using Accessors
 using SparseArrays
 using StaticArrays
 using Adapt
-# using CUDA
 using KernelAbstractions
 using Atomix
 using GPUArrays
@@ -26,6 +25,8 @@ include("Discretise_2_generated_distretisation.jl")
 include("Discretise_3_boundary_conditions.jl")
 include("Discretise_4_assign_boundaries.jl")
 include("Discretise_5_apply_bcs.jl")
+include("Discretise_7_boundary_actions.jl")
+include("Discretise_8_residual_bcs.jl")
 
 include("boundary_conditions/0_definition_macro.jl")
 include("boundary_conditions/1_boundary_interpolation.jl")

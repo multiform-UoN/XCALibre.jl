@@ -1,7 +1,7 @@
 using XCALibre
 using LinearAlgebra
-using Accessors
 using Printf
+using Statistics
 
 # 1. Setup Mesh
 grids_dir = pkgdir(XCALibre, "examples/0_GRIDS")
@@ -67,45 +67,36 @@ run!(model, config)
 C = ScalarField(mesh_dev)
 initialise!(C, 1.0)
 
-# Inject C into model for linearize_bcs to find it
-# (XCALibre's Physics struct doesn't have custom scalar fields by default,
-# so we create a simple wrapper or just pass C manually)
-# For this example, I'll pass a dummy object that matches what linearize_bcs expects.
-model_with_C = (U=model.momentum.U, p=model.momentum.p, C=C, mesh=mesh_dev)
-
 mdotf = FaceScalarField(mesh_dev)
 interpolate!(model.momentum.Uf, model.momentum.U, config)
 flux!(mdotf, model.momentum.Uf, config)
 gamma = ConstantScalar(1e-4)
 
-@info "Solving Non-Linear Scalar Transport..."
-for i in 1:50
-    # 5.1 AUTOMATIC LINEARIZATION (linearize NonLinearRobin BCs for C field)
-    new_C_bcs = linearize_bcs(BCs.C, C)
+L_C = ((
+      Divergence{schemes.C.divergence}(mdotf)
+    - Laplacian{schemes.C.laplacian}(gamma)
+    ==
+    Source(ConstantScalar(0.0))
+) → BCs.C) → solvers.C
 
-    # 5.2 Build/Update Equation with new BCs
-    C_eqn = (
-          Divergence{schemes.C.divergence}(mdotf, C)
-        - Laplacian{schemes.C.laplacian}(gamma, C)
-        ==
-        Source(ConstantScalar(0.0))
-    ) → ScalarEquation(C, new_C_bcs)
+C_eqn = L_C(C)
 
-    # Initialise solver
-    @reset C_eqn.preconditioner = set_preconditioner(solvers.C.preconditioner, C_eqn)
-    @reset C_eqn.solver = XCALibre._workspace(solvers.C.solver, XCALibre._b(C_eqn))
+@info "Solving scalar transport with Newton-linearised NonLinearRobin BC..."
+last_res = Ref(Inf)
+for iter in 1:50
+    # NonLinearRobin is linearised outside the boundary kernel. This keeps the
+    # nonlinear BC visible without rebuilding solver/preconditioner plumbing by hand.
+    C_bcs, linear_eqn, _ = linearize_physics(BCs.C, C_eqn)
+    iter_res = solve_equation!(linear_eqn, C, C_bcs, solvers.C, config)
+    last_res[] = iter_res
 
-    # 5.3 Solve
-    res = solve_system!(C_eqn, solvers.C, C, nothing, config)
-    
-    if i % 10 == 0
-        @printf("Iteration %d, C Res: %.2e, Avg C on Wall: %.4f\n", 
-                i, res, mean(C.values[mesh.boundary_cellsID[BCs.C[2].IDs_range]]))
+    if iter % 10 == 0 || iter_res < solvers.C.convergence
+        @printf("Iteration %d, C residual %.2e\n", iter, iter_res)
     end
-    if res < solvers.C.convergence
-        @info "Converged at iter $i"
-        break
-    end
+    iter_res < solvers.C.convergence && break
 end
+
+wall_mean = mean(C.values[mesh_dev.boundary_cellsID[BCs.C[2].IDs_range]])
+@printf("NonLinearRobin ADR: final residual=%.2e, wall mean C=%.4f\n", last_res[], wall_mean)
 
 @info "Non-linear ADR example completed!"

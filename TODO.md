@@ -79,13 +79,27 @@
 - **Benchmark Suite**: A systematic `Stokes3x3` matrix created in `examples/nonNewtonian/benchmarks` exploring straight vs L-bend geometries and Neumann vs Pressure-driven BCs.
 - **Compressible Foundations**: Weakly compressible Stokes and Maxwell formulations verified. Rhie-Chow stabilization gracefully accommodates the $\beta p + \nabla \cdot u = 0$ continuity modifications.
 
+### Topology-First Periodicity Prototype
+- `XCALibre.Mesh.construct_periodic_topology` rewires translational periodic patch pairs into internal-face-like owner/neighbour connections before assembly.
+- Straight-channel Stokes and Maxwell periodic examples assemble and solve using the topology path.
+- Periodic examples now route through the shared mesh helper instead of maintaining separate sparse-mutation or copied connectivity logic.
+- This is the preferred long-term direction for monolithic systems because scalar, pressure, stress, and auxiliary block offsets are handled by the ordinary sparsity builder.
+- Still prototype-level for rotations, component transforms, non-orthogonal correction details, output metadata, and MPI/domain decomposition.
+
 ---
 
 ## PENDING
 
-### Monolithic Periodic Boundary Conditions Redesign
+### Consolidation Priorities
+- Stabilise the operator-first, monolithic, residual, and topology-periodic APIs before adding more rheology models or external ML/AD integrations.
+- Keep examples short and numerical: each benchmark should identify the model, mesh, boundary setup, stabilisation, solver/preconditioner, and reported residual.
+- Avoid duplicating mesh rewiring, sparse conversion, field scattering, and pressure-pinning utilities in examples; move repeated mechanics into small explicit helpers.
+- Preserve direct sparse solves as verification mode for benchmark-scale systems, especially when Krylov convergence is the object under study.
+- Treat bend Maxwell/viscoelastic GMRES limits as conditioning/preconditioning work. The current evidence points to block scaling, near-zero solvent viscosity stiffness, Schur-complement quality, and simple preconditioners rather than corrupt PDE assembly.
+
+### Monolithic Periodic Boundary Conditions Hardening
 - **Current Limitation**: The existing `Periodic` BC is scalar-oriented. Its sparse connectivity extension assumes `global row == cell id`, which is not true for monolithic block systems where pressure/stress/auxiliary fields live at block offsets. Algebraic post-assembly correction can be made to work by applying row/column offsets, but it becomes fragile because every operator (`Laplacian`, `ScalarGrad`, `VectorDiv`, upwind transport, Rhie-Chow terms) needs its own periodic insertion semantics.
-- **Preferred Long-Term Design**: Periodicity should be mesh topology, not boundary-condition algebra. Periodic patch pairs should be converted into internal-face-like owner/neighbour connections during mesh construction or an explicit mesh-finalisation pass.
+- **Preferred Long-Term Design**: Periodicity should remain mesh topology, not boundary-condition algebra. The translational prototype now exists in `src/Mesh/Mesh_2_periodic.jl`; the remaining task is to harden and generalise it.
 - **Mesh Data Changes Needed**:
   - Add periodic face-pair records that store owner cell, periodic neighbour cell, master/slave face ids, orientation/sign, and the geometric transform from owner to periodic neighbour.
   - Extend `cell_faces`, `cell_neighbours`, `cell_nsign`, and each cell `faces_range` so periodic connections appear in the same loops as internal faces.
@@ -102,6 +116,19 @@
   - VTK/OpenFOAM output should retain patch identity even if solver topology treats the faces as internal.
 - **Transitional Option**: A post-assembly periodic correction can be used only as a narrow proof-of-concept for scalar operators. It should not become the main monolithic design because it duplicates operator logic and is easy to break with block offsets.
 
+### Residual/Jacobian BC Action Prototype
+- `examples/operatorBC/fv_residual_bc_laplacian.jl` connects the BC residual/action idea to a real assembled FV Laplacian rather than a synthetic matrix.
+- The reusable action types and `LocalScalarResidualBC` helper now live in `src/Discretise/Discretise_7_boundary_actions.jl`; the examples no longer define their own action backend.
+- Useful parts:
+  - BC semantics can be expressed as local residuals `B(u)=0`.
+  - Nonlinear BC Jacobian rows fit naturally into Newton correction systems.
+  - Matrix layout, monolithic offsets, CSR/CSC storage, and future matrix-free backends can be treated as backend concerns.
+- Keep experimental:
+  - Current action objects and vectors are allocation-heavy and CPU-oriented.
+  - Sparse row replacement is a demonstration backend, not a production assembly path.
+  - Real integration needs explicit hooks in FV operator/boundary assembly, not a dispatch-heavy layer wrapped around completed matrices.
+- GPU/HPC requirement before promotion: lower BC actions into static, allocation-free residual/Jacobian kernels with predictable memory access and no runtime dispatch in inner loops.
+
 ### Direct Solver Diagnostics (Completed)
 - Diagnostics run using Julia's sparse `\` (UMFPACK) on the unstructured 9440-cell L-bend mesh confirmed the PDE assembly is correct, and isolated the slow Krylov convergence in Maxwell to an iterative conditioning problem.
   - *Stokes-like ($\mu_s=1, \mu_p=0$)*: Direct solve 1.18s, max|u| 0.124.
@@ -113,30 +140,33 @@
 - Current `linearize_physics` runs a scalar CPU loop over cell values
 - Enzyme device-side AD (kernel-level) needed for GPU Newton
 - Requires Humberto's input on kernel AD API before implementing
+- Secondary until the residual/operator interfaces settle. Do not assume Julia-level abstractions automatically map to efficient device kernels.
 
 ### Non-Orthogonal Correction for Biharmonic
 - Current Biharmonic scheme is orthogonal-mesh only
 - Non-orthogonal correction requires the cross-diffusion term at ∇² level before applying Δ²
 
 ### Poroelasticity Example
-- `examples/poroelastic/biot_consolidation_1d.jl`: Terzaghi 1-D consolidation with fixed-stress split ✓
+- `examples/linearElastic/biot_consolidation_1d.jl`: Terzaghi 1-D consolidation with fixed-stress split ✓
 - Elastic block: `MonolithicSystem([u_eqn, v_eqn])` + GradDiv (same as linear_elastic_2d)
 - Flow block: `Time{Euler}(Sε) - Laplacian{Linear}(k) == Source(div_u_src)` via PDEOperator DSL
 - Live-reference sources: `Source(p_grad_x)` / `Source(div_u_src)` update without equation rebuild
-- Monolithic 3-field Biot complete: `biot_consolidation_monolithic.jl` — uses `ScalarGrad{T,I}` and `VectorDiv{T,J}` coupling operators
+- Monolithic 3-field Biot complete: `examples/linearElastic/biot_consolidation_monolithic.jl` — uses `ScalarGrad{T,I}` and `VectorDiv{T,J}` coupling operators
 
 ### SciML / Lux Integration
 - Lux.jl preferred over Flux.jl for Enzyme compatibility
 - Targeted use: learned preconditioners, neural constitutive models, surrogate BCs
 - Fully differentiable simulation pipeline (sensitivity analysis, topology optimisation)
+- Secondary until core FV residual/Jacobian and monolithic solver APIs are stable.
 
 ### JFNK (Jacobian-Free Newton-Krylov)
 - `jvp!(y, L, u, v, config)` — Jacobian-vector product via `explicit_residual!` + finite difference
 - Enables Newton with no matrix assembly; purely matrix-free inner Krylov iterations
 - Foundation (`explicit_residual!`) is in place; only the JVP wrapper remains
+- Keep this behind explicit residual verification; matrix-free correctness should be tested against assembled residuals before adding more nonlinear physics.
 
 ### Upstream PR Candidates
 - `Robin` + `NonLinearRobin` BCs (ready, no API dependency)
-- Rotational periodic BC (ready, surgical change)
+- Rotational periodic BC (algebraic path exists, but topology-first implications should be reviewed before upstreaming)
 - `Biharmonic` operator (wait for non-orthogonal correction)
 - `OperatorTemplate` / `PDEOperator` abstraction (wait for Humberto's API review)
