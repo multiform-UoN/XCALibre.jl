@@ -106,14 +106,21 @@ function assemble_monolithic_system(sys::MonolithicSystem, bcs_list, config)
     (; equations, phi_list, n_vars, n_cells, field_to_idx) = sys
     mesh = phi_list[1].mesh
     TF = _get_float(mesh)
-    
+
     A_csr = _build_monolithic_sparsity(n_vars, n_cells, mesh, TF)
     N = n_vars * n_cells
     b_mono = zeros(TF, N)
-    
+
     monolithic_discretise!(sys, A_csr, b_mono, config)
-    monolithic_apply_bcs!(sys, A_csr, b_mono, bcs_list, config)
-    
+    # When bcs_list is nothing, BCs are read from sub-equations (set at construction time).
+    # When bcs_list is provided, it is passed for compatibility but the 5-arg overload of
+    # monolithic_apply_bcs! now ignores it and also reads from sub-equations.
+    if bcs_list === nothing
+        monolithic_apply_bcs!(sys, A_csr, b_mono, config)
+    else
+        monolithic_apply_bcs!(sys, A_csr, b_mono, bcs_list, config)
+    end
+
     return A_csr, b_mono
 end
 
@@ -210,6 +217,16 @@ function monolithic_residual!(r_mono, sys::MonolithicSystem, bcs_list, config)
 end
 
 """
+    solve_monolithic!(sys::MonolithicSystem, config; kwargs...)
+
+No-bcs_list overload — BCs are read directly from each sub-equation stored in `sys`.
+Use after constructing with `MonolithicSystem([U_eqn, h_eqn], [U, h])` which auto-decomposes
+VectorModel equations and stores projected BCs inside the sub-equations.
+"""
+solve_monolithic!(sys::MonolithicSystem, config; kwargs...) =
+    solve_monolithic!(sys, nothing, config; kwargs...)
+
+"""
     solve_monolithic!(sys::MonolithicSystem, bcs_list, config)
 """
 function solve_monolithic!(
@@ -222,23 +239,6 @@ function solve_monolithic!(
     iterations = runtime.iterations
     N = sys.n_vars * sys.n_cells
     mesh = sys.phi_list[1].mesh
-    
-    # 1. Decompose BCs if they are still in vector form
-    flat_bcs = []
-    if length(bcs_list) < sys.n_vars
-        # Heuristic: if we have fewer BC lists than variables, some must be vectors
-        # (This happens when the user passes [BCs.U, BCs.p] for a 3-var system)
-        # We need a more robust way to map them. 
-        # Actually, let's just require the user to pass a flat list for now, 
-        # or implement a smart mapper.
-    end
-    # Safe fallback: if bcs_list matches sys.phi_list length, we are good.
-    # If it doesn't, we try to decompose.
-    if length(bcs_list) != sys.n_vars
-        # Map original phis to original BCs, then decompose
-        # (This part is tricky without knowing the original un-decomposed structure)
-        # Better: MonolithicSystem should have been built with a list of phis that matches bcs_list.
-    end
     
     b_mono = zeros(TF, N)
     # Heuristic: use the solver from the first field for the monolithic system.

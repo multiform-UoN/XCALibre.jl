@@ -365,6 +365,7 @@ function solve_system!(phiEqn::ModelEquation, setup, result, component, config)
         A = _A(phiEqn)
         b = _b(phiEqn, component)
         P = set_preconditioner(setup.preconditioner, phiEqn)
+        update_preconditioner!(P, get_phi(phiEqn).mesh, config)
         S = _workspace(setup.solver, b)
         
         # Call the actual solver with these temporary objects

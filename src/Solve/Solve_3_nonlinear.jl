@@ -128,12 +128,34 @@ end
 # ---------------------------------------------------------------------------
 # linearize_physics: convert all NonlinearOperator terms into standard Operators
 # using automatic differentiation.
+#
+# DESIGN NOTE — assembled Jacobian vs JFNK
+# -----------------------------------------
+# linearize_physics is an ASSEMBLED JACOBIAN pre-pass:
+#   - iterates over all cells (CPU loop; asserted CPU-only via _assert_cpu_linearization)
+#   - calls ForwardDiff.derivative or Enzyme.autodiff per cell for each NonlinearOperator
+#   - produces AffineOperator fields (jacobian, offset) used in the next discretise!/solve!
+#   - required for: assembled J·δu = -R Newton, ILU/block preconditioners
+#   - NOT required for: JFNK inner Krylov loop
+#
+# JFNK (Jacobian-Free Newton-Krylov) alternative (see examples/gpu_kernels/prototype_C_jvp.jl):
+#   - inner loop uses FD-JVP: Jv ≈ (R(u+εv) - R(u)) / ε via full_residual! kernel
+#   - outer Newton update uses R(u_k) directly from full_residual! (Prototype B)
+#   - linearize_physics NOT called; sparse Jacobian never assembled
+#   - GPU-compatible today: full_residual! is a @kernel, FD-JVP is two kernel launches
+#   - preconditioner (optional): diagonal J_ii = Σ D_f_i (computable by a single kernel pass)
+#
+# GPU Newton roadmap:
+#   1. CPU Newton (current):     linearize_physics + discretise! + solve_equation!
+#   2. JFNK GPU (near-term):     full_residual! + fd_jvp! + matrix-free Krylov
+#   3. GPU preconditioner:       diagonal precon kernel; no linearize_physics needed
+#   4. Assembled GPU Jacobian:   requires Enzyme device-side AD or parallel sparse fill
 # ---------------------------------------------------------------------------
 
 """
     linearize_physics(BCs, model_eqn, other_fields=[]; susp=false, ad_backend=:forwarddiff)
 
-Pre-pass Newton linearisation for a single equation. 
+Pre-pass Newton linearisation for a single equation.
 `other_fields` allows for cross-field dependencies in `NonLinearSi` terms.
 Returns (new_bcs, linearised_model_eqn, cross_coupling_terms).
 """

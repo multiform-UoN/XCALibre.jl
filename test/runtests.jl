@@ -32,6 +32,14 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("unit_test_nonlinear_operators.jl")
     end
 
+    @testset "Robin BC Unit Test" begin
+        include("unit_test_robin.jl")
+    end
+
+    @testset "Monolithic VectorModel Decomposition" begin
+        include("unit_test_monolithic_vector.jl")
+    end
+
     @testset "setFields Function Unit Test" begin
         include("unit_test_setFields.jl")
     end

@@ -4,12 +4,25 @@ export AbstractResidualBC, LocalScalarResidualBC
 export boundary_actions, residual_value
 export apply_boundary_action!, apply_boundary_actions!
 
-# Lightweight action language for examples and prototype backends.
+# =============================================================================
+# EXPERIMENTAL — secondary assembly path for residual/Newton/JFNK workflows
+# =============================================================================
+# This layer coexists with the primary (ap,bp) implicit FV assembly in
+# apply_boundary_conditions! (Discretise_5_apply_bcs.jl). It is NOT a
+# replacement — both paths serve different purposes:
 #
-# These actions deliberately describe algebraic contributions without knowing
-# whether the consuming backend is CSC, CSR, matrix-free, or a future device
-# kernel. The concrete backend provided here is SparseMatrixCSC row/entry
-# mutation for small CPU tutorials and diagnostics, not a hot-loop GPU path.
+#   Primary path (ap,bp):  production FV, GPU-compatible, all standard BCs
+#   This path (actions):   optional, CPU-only, for nonlinear/residual workflows
+#
+# Limitations:
+#   - CPU-only: backends are SparseMatrixCSC row/entry mutation
+#   - Allocation-heavy: actions are returned as small tuples/vectors
+#   - Not integrated into apply_boundary_conditions! kernel
+#   - Not GPU-ready: no KernelAbstractions kernel, no atomic operations
+#
+# Use for: Newton linearisation, custom Jacobians, JFNK residual evaluation,
+#          residual instrumentation, matrix-free experimentation.
+# =============================================================================
 
 abstract type AbstractBoundaryAction end
 

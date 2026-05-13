@@ -96,12 +96,37 @@ end
 # not the equation's self-field BCs.  Cross-field BC contributions go to the
 # off-diagonal block (i, j) at the diagonal position within that block.
 # ---------------------------------------------------------------------------
+# 4-arg (+ optional time): BCs are read from sub-equations (set at construction time).
+# time::Real annotation disambiguates from the 5-arg backward-compat form below.
+function monolithic_apply_bcs!(
+    sys::MonolithicSystem,
+    A_mono::SparseMatricesCSR.SparseMatrixCSR,
+    b_mono::AbstractVector,
+    config,
+    time::Real=0.0
+)
+    bcs_by_eqn = [get_bcs(sys.equations[j]) for j in 1:length(sys.equations)]
+    _monolithic_apply_bcs_impl!(sys, A_mono, b_mono, bcs_by_eqn, time)
+end
+
+# 5/6-arg backward-compatible form: bcs_list ignored, delegates to sub-equation BCs.
+# time::Real annotation prevents ambiguity with the 4-arg default-time variant above.
 function monolithic_apply_bcs!(
     sys::MonolithicSystem,
     A_mono::SparseMatricesCSR.SparseMatrixCSR,
     b_mono::AbstractVector,
     bcs_list,
     config,
+    time::Real=0.0
+)
+    monolithic_apply_bcs!(sys, A_mono, b_mono, config, time)
+end
+
+function _monolithic_apply_bcs_impl!(
+    sys::MonolithicSystem,
+    A_mono::SparseMatricesCSR.SparseMatrixCSR,
+    b_mono::AbstractVector,
+    bcs_by_eqn,
     time=0.0
 )
     (; equations, phi_list, n_cells, field_to_idx) = sys
@@ -116,7 +141,7 @@ function monolithic_apply_bcs!(
             phi_j = _term_phi(term)
             j = field_to_idx[objectid(phi_j.values)]
             col_off = (j - 1) * n_cells
-            BCs_j = bcs_list[j]
+            BCs_j = bcs_by_eqn[j]
 
             for fID in 1:nbfaces
                 cellID = boundary_cellsID[fID]

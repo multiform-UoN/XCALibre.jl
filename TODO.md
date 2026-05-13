@@ -86,6 +86,13 @@
 - This is the preferred long-term direction for monolithic systems because scalar, pressure, stress, and auxiliary block offsets are handled by the ordinary sparsity builder.
 - Still prototype-level for rotations, component transforms, non-orthogonal correction details, output metadata, and MPI/domain decomposition.
 
+### GPU Kernel Prototypes and JVP Infrastructure
+- `examples/gpu_kernels/prototype_A_laplacian_residual.jl` — matrix-free scalar Laplacian residual `@kernel`; no sparse matrix; allocation-free inner loop; GPU-portable
+- `examples/gpu_kernels/prototype_B_bc_residual.jl` — static BC residual kernel; Dirichlet uses `Atomix.@atomic`; typed-tuple dispatch; `full_residual! = interior + BC` agrees with assembled `A·φ - b` to floating-point precision
+- `examples/gpu_kernels/prototype_C_jvp.jl` — three JVP implementations: (1) assembled A·v, (2) linear-kernel JVP (exact for linear ops, zero FD error), (3) FD-JVP `(R(u+εv)-R(u))/ε` (universal, nonlinear-safe, GPU-compatible); all three agree; includes BC JVP kernel `dirichlet_bc_jvp_kernel!`
+- `examples/gpu_kernels/prototype_D_bc_lowering.jl` — architectural lowering from `Discretise_7` action vocabulary to static `@inline bc_residual(BC::T, ...)` / `bc_jvp_coeff(BC::T, ...)` functions; verifies same numerical values as `LocalScalarResidualBC`; documents semantic distinction (row-replacement vs scatter-add) and `NonLinearRobin` extension path
+- `examples/gpu_kernels/benchmark_mf_vs_assembled.jl` — timing benchmark on 3×3 / 5×5 / 2D mesh: assembled CSR SpMV vs `explicit_residual!` vs Prototype A+B; memory footprint comparison
+
 ---
 
 ## PENDING
@@ -136,11 +143,39 @@
   - *Maxwell ($\mu_s=10^{-6}, \mu_p=1$)*: Direct solve 5.88s, max|u| 0.148.
 - **Conclusion**: The monolithic block-coupled equations are physically and algebraically valid. The stiffness introduced by the near-zero solvent viscosity in Maxwell cases makes simple GMRES+Jacobi struggle. Direct solvers provide an excellent verification mode for benchmark-scale domains without requiring advanced preconditioning research.
 
-### GPU Newton / Enzyme Device Path
-- Current `linearize_physics` runs a scalar CPU loop over cell values
-- Enzyme device-side AD (kernel-level) needed for GPU Newton
-- Requires Humberto's input on kernel AD API before implementing
-- Secondary until the residual/operator interfaces settle. Do not assume Julia-level abstractions automatically map to efficient device kernels.
+### GPU Readiness Audit
+
+#### Currently GPU-ready (runs as `@kernel` today)
+- `apply_boundary_conditions!` — `Discretise_5_apply_bcs.jl`; typed BC tuple, no dynamic dispatch
+- `correct_boundaries!` — `Discretise_3_boundary_conditions.jl`
+- All FV assembly kernels — `Discretise_2_generated_distretisation.jl` (`@generated` + `@kernel`)
+- `explicit_residual!` — matrix-free, allocation-free, type-stable
+- Prototype A/B kernels — `examples/gpu_kernels/`; swap `backend = CUDABackend()` to run on GPU
+
+#### GPU-compatible architecture (CPU today; GPU port is straightforward)
+- `construct_periodic_topology` — CPU preprocessing; once topology is rewired, periodic faces appear as interior connections and all cell-loop `@kernel`s are automatically periodic-safe, no kernel changes needed
+- `MonolithicSystem` sparsity construction — CPU preprocessing; the resulting CSR matrix can be adapted to GPU with `adapt(backend, A)`
+- Assembled CSR path — `SparseMatricesCSR` on GPU is supported by `CUDA.jl` via `CUSPARSE`
+
+#### CPU-only (explicit design choice or technical blocker)
+- `linearize_physics` — ForwardDiff on CPU arrays; `_assert_cpu_linearization` throws if backend ≠ CPU
+- `Discretise_7_boundary_actions.jl` — `SparseMatrixCSC` row surgery, `Vector{AbstractBoundaryAction}` dynamic dispatch; documented CPU-only
+- `monolithic_discretise!` — sequential CPU loop (equations × cells × faces); no `@kernel`
+- `monolithic_apply_bcs!` — sequential CPU loop over boundary faces
+- `newton_solve!` (all variants) — depends on `linearize_physics`
+
+#### GPU-dangerous abstractions (need redesign before GPU port)
+- `Vector{<:AbstractBoundaryAction}` in `apply_boundary_actions!` — runtime polymorphism kills GPU dispatch
+- `SparseMatrixCSC` mutation anywhere — column-oriented, GPU-hostile; GPU path must use CSR
+- `objectid(phi.values)` in `field_to_idx` — pointer-based identity; brittle if CPU/GPU arrays are different objects (currently only used at CPU assembly time, not in kernels, so not an immediate hazard)
+
+#### Staged GPU roadmap
+1. **(Ready now)** Matrix-free residual `R(u)`: `explicit_residual!` / Prototype A+B.
+2. **(Ready now)** FD-JVP `J(u)·v`: Prototype C `fd_jvp!` — two `full_residual!` calls; no matrix; nonlinear-safe; GPU-compatible by swapping backend.
+3. **(Near)** JFNK solver: wrap `fd_jvp!` in a matrix-free Krylov loop (GMRES/BiCGSTAB via LinearAlgebra or IterativeSolvers); outer Newton uses `full_residual!` for convergence check.
+4. **(Near)** Diagonal preconditioner: kernel that accumulates `Σ D_f` per cell — avoids `linearize_physics` entirely for Jacobi preconditioning.
+5. **(Medium)** BC JVP for `NonLinearRobin`: scalar FD or `Enzyme.autodiff` per face; allocation-free, device-safe (Prototype D documents the extension path).
+6. **(Long)** Assembled GPU Jacobian: Enzyme device-side AD through `@kernel` functions, or CPU-compute J then `adapt(backend, J)`. Required only for ILU/block preconditioners. `linearize_physics` stays CPU-only until this step.
 
 ### Non-Orthogonal Correction for Biharmonic
 - Current Biharmonic scheme is orthogonal-mesh only

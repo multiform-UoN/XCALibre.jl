@@ -1,35 +1,12 @@
 # =============================================================================
-# Experimental Boundary Action API
+# DEPRECATED — superseded by Discretise_7_boundary_actions.jl
 # =============================================================================
-# This infrastructure decouples BC semantic logic (Residual/Jacobian) from
-# backend matrix storage (CSR, Monolithic block, etc).
+# This file defined a minimal "Clerk" action vocabulary (BoundaryAction, SetRow,
+# AddDiagonal, AddSource, inject!, ResidualBC) that partially overlapped with the
+# richer AbstractBoundaryAction hierarchy in Discretise_7_boundary_actions.jl.
 #
-# DESIGN:
-# 1. ResidualBCs compute mathematical contributions (Residual/Jacobian).
-# 2. They return BoundaryActions (AddDiagonal, AddSource, etc).
-# 3. Solver consumers inject actions into their specific matrix layout.
-
-export BoundaryAction, SetRow, AddDiagonal, AddSource, inject!
-export ResidualBC, get_residual_actions
-
-abstract type BoundaryAction end
-struct SetRow <: BoundaryAction; row::Int; value::Float64; end
-struct AddDiagonal <: BoundaryAction; row::Int; value::Float64; end
-struct AddSource <: BoundaryAction; row::Int; value::Float64; end
-
-abstract type ResidualBC end
-
-# Backend Injectors (The Clerk)
-function inject!(A::SparseMatrixCSC, b::AbstractVector, action::SetRow)
-    A[action.row, :] .= 0.0
-    A[action.row, action.row] = 1.0
-    b[action.row] = action.value
-end
-
-function inject!(A::SparseMatrixCSC, b::AbstractVector, action::AddDiagonal)
-    A[action.row, action.row] += action.value
-end
-
-function inject!(A::SparseMatrixCSC, b::AbstractVector, action::AddSource)
-    b[action.row] += action.value
-end
+# The file is retained for git history but is NO LONGER included in Discretise.jl.
+# Use the Discretise_7 API instead:
+#   SetEquationRow, SetNewtonRow, AddDiagonalEntry, AddRHSEntry, AddJacobianEntry
+#   LocalScalarResidualBC, apply_boundary_action!, apply_boundary_actions!
+# =============================================================================

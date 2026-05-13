@@ -46,14 +46,9 @@ using Accessors
         boundaries=BCs
     )
     
-    bcs_list = [
-        XCALibre.ModelFramework.decompose_bcs(BCs.U, 1),
-        XCALibre.ModelFramework.decompose_bcs(BCs.U, 2),
-        BCs.p
-    ]
-    
-    # Solve (one Picard step)
-    res = solve_monolithic!(sys, bcs_list, config)
+    # BCs are stored inside each sub-equation by the MonolithicSystem constructor
+    # (via decompose). No manual bcs_list required.
+    res = solve_monolithic!(sys, config)
     @test isfinite(res)
     
     println("Success: Monolithic Vector-Scalar system runs.")

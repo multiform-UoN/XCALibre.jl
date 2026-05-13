@@ -213,8 +213,10 @@ end
 
 
 # BIHARMONIC OPERATOR
+# NOTE: orthogonal-mesh assumption — uses area/delta² stencil with no non-orthogonal
+# correction. Results degrade on skewed or non-orthogonal meshes.
 @inline function scheme!(
-    term::Operator{F,P,I,Biharmonic{T}}, 
+    term::Operator{F,P,I,Biharmonic{T}},
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
     )  where {F,P,I,T}
     

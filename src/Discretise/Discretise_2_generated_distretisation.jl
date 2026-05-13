@@ -200,9 +200,20 @@ end
 @generated function _scheme_source!(model::Model{TN,SN,T,S}, terms::TERMS, cell, cID, cIndex, prev, runtime) where {TN,SN,T,S,TERMS}
     # Allocate expression array to store scheme_source function
     out = Expr(:block)
-    
+
+    # Determine scalar vs vector model.
+    # When SN>0 use source field type; when SN==0 fall back to first term's phi type.
+    # (S = Tuple{} when no sources, so S.parameters[1] would throw for SN==0.)
+    phi_field_type = if SN > 0
+        S.parameters[1].parameters[1]
+    elseif TN > 0
+        T.parameters[1].parameters[2]  # Operator{F, P, I, Type} → P is the phi field
+    else
+        AbstractScalarField  # empty model: default to scalar path
+    end
+
     # Loop over number of terms and store scheme_source function in array
-    if S.parameters[1].parameters[1] <: AbstractScalarField
+    if phi_field_type <: AbstractScalarField
         for t in 1:TN
             function_call_scheme_source = quote
                 ac, b = scheme_source!(terms[$t], cell, cID, cIndex, prev, runtime)
@@ -219,7 +230,7 @@ end
             $(out.args...)
             return AC, B
         end
-    elseif S.parameters[1].parameters[1] <: AbstractVectorField
+    elseif phi_field_type <: AbstractVectorField
         for t in 1:TN
             function_call_scheme_source = quote
                 ac, bx = scheme_source!(terms[$t], cell, cID, cIndex, prev.x, runtime)
@@ -252,8 +263,17 @@ end
     # Allocate expression array to store source function
     out = Expr(:block)
 
+    # Same scalar/vector detection as _scheme_source!
+    phi_field_type = if SN > 0
+        S.parameters[1].parameters[1]
+    elseif TN > 0
+        T.parameters[1].parameters[2]
+    else
+        AbstractScalarField
+    end
+
     # Loop over number of terms and store source function in array
-    if S.parameters[1].parameters[1] <: AbstractScalarField
+    if phi_field_type <: AbstractScalarField
         for s in 1:SN
             expression_call_sources = quote
                 (; field, sign) = sources[$s]
@@ -266,7 +286,7 @@ end
             $(out.args...)
             return B
         end
-    elseif S.parameters[1].parameters[1] <: AbstractVectorField
+    elseif phi_field_type <: AbstractVectorField
         for s in 1:SN
             expression_call_sources = quote
                 (; field, sign) = sources[$s]
@@ -449,6 +469,11 @@ end
 # ---------------------------------------------------------
 # PHASE 5: Matrix-Free Evaluation
 # ---------------------------------------------------------
+# NOTE: explicit_residual! computes INTERIOR-ONLY residual contributions.
+# cell.faces_range contains only interior face indices (by mesh topology design).
+# Boundary-face BC contributions are NOT included here.
+# To form the full residual (= assembled A·φ - b), add BC residual contributions
+# via a separate BC kernel pass (see examples/gpu_kernels/prototype_B_bc_residual.jl).
 
 function explicit_residual!(r::AbstractVector, eqn::ModelEquation{T,M,E,S,P}, phi, config) where {T<:ScalarModel,M,E,S,P}
     (; hardware, runtime) = config

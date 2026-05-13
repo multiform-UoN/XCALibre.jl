@@ -1,3 +1,13 @@
+# =============================================================================
+# PENDING — requires Phase 3A: newton_solve!(::MonolithicSystem, ...)
+# =============================================================================
+# This file shows the intended API for monolithic Newton with VectorModel
+# decomposition. It will not run until Phase 3A (monolithic Newton) is
+# implemented in Solve_2_monolithic.jl.
+#
+# See /plans/vector-decompose-monolithic-newton.md for the implementation plan.
+# =============================================================================
+
 using XCALibre
 using Test
 using LinearAlgebra
