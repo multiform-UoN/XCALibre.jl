@@ -2,7 +2,7 @@ export SolverSetup, Runtime, Schemes
 export explicit_relaxation!, implicit_relaxation!, implicit_relaxation_diagdom!, setReference!
 export solve_system!
 export solve_equation!, solve_preassembled!
-export residual, residual!, residual_norm, solve_residual
+export residual, residual!, residual_norm, solve_residual, jvp!
 export AdaptiveTimeStepping
 
 import XCALibre.ModelFramework: →, PDEOperator
@@ -567,20 +567,42 @@ end
 
 function residual!(
     r, eqn::ModelEquation{T,M,E,S,P}, config; component=nothing, time=nothing,
-    assemble=true, susp=false, ad_backend=:forwarddiff
+    assemble=true, matrix_free=false, susp=false, ad_backend=:forwarddiff
     ) where {T<:ScalarModel,M,E,S,P}
     eqn = _residual_equation(eqn; susp=susp, ad_backend=ad_backend)
     phi = get_phi(eqn)
-    if assemble
-        discretise!(eqn, phi, config)
-        apply_boundary_conditions!(eqn, config; time=time, component=component)
+    if matrix_free
+        # Matrix-free path: interior kernel + BC residual kernel — no sparse matvec.
+        # Requires the equation to have been discretised at least once (for nzval layout).
+        fill!(r, zero(eltype(r)))
+        explicit_residual!(r, eqn, phi, config)
+        apply_bc_residuals!(r, eqn, config; component=component, time=time)
+    else
+        if assemble
+            discretise!(eqn, phi, config)
+            apply_boundary_conditions!(eqn, config; time=time, component=component)
+        end
+        A = _A(eqn)
+        b = _b(eqn, component)
+        values = get_values(phi, component)
+        r .= A * values
+        r .-= b
     end
-    A = _A(eqn)
-    b = _b(eqn, component)
-    values = get_values(phi, component)
-    r .= A * values
-    r .-= b
     return r
+end
+
+function jvp!(Jv::AbstractVector, v::AbstractVector, eqn::ModelEquation{T,M,E,S,P}, config; component=nothing, time=nothing, ε=nothing) where {T<:ScalarModel,M,E,S,P}
+    phi_vals = get_values(get_phi(eqn), component)
+    F  = eltype(phi_vals)
+    ε0 = ε === nothing ? sqrt(eps(F)) : F(ε)
+    r0 = similar(phi_vals)
+    r1 = similar(phi_vals)
+    residual!(r0, eqn, config; component=component, time=time, matrix_free=true, assemble=false)
+    @. phi_vals += ε0 * v
+    residual!(r1, eqn, config; component=component, time=time, matrix_free=true, assemble=false)
+    @. phi_vals -= ε0 * v   # restore
+    @. Jv = (r1 - r0) / ε0
+    return Jv
 end
 
 function residual!(r, eqn::ModelEquation{T,M,E,S,P}, config; kwargs...) where {T<:VectorModel,M,E,S,P}

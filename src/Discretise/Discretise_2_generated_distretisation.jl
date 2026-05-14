@@ -508,8 +508,9 @@ end
         end
         ac, b1 = _scheme_source!(model, terms, cell, i, 1, prev, runtime)
         b2 = _sources!(model, sources, volume, i)
-        
+
         # r = A*phi - b
         r[i] = (ac_sum + ac) * prev[i] + an_phi_sum - (b_sum + b1 + b2)
     end
 end
+

@@ -1,4 +1,4 @@
-export apply_boundary_conditions!
+export apply_boundary_conditions!, apply_bc_residuals!
 
 
 
@@ -166,6 +166,89 @@ end
         $(func_calls...)
         return AP, BP
     end
+end
+
+# =============================================================================
+# BC RESIDUAL PATH
+# =============================================================================
+# apply_bc_residuals!(r, eqn, config) adds boundary-face contributions to a
+# pre-allocated residual vector.  The formula is identical to the assembly path:
+#   r[cellID] += AP * phi_P - BP
+# where (AP, BP) come from the same apply!(model, BC, terms, ...) generated
+# function used during matrix assembly — zero formula duplication.
+#
+# This is the missing piece to form the FULL residual without re-assembling A:
+#   residual!(r, eqn, config) = explicit_residual! (interior) + apply_bc_residuals! (BCs)
+#
+# NOTE: Standard BCs (Dirichlet, Neumann, Robin, etc.) are handled here.
+# For genuinely nonlinear BCs (NonLinearRobin), additionally call
+# add_bc_residuals! from the bc_ops extension interface.
+
+apply_bc_residuals!(r, eqn, config; component=nothing, time=nothing) = begin
+    _apply_bc_residuals!(r, eqn.model, get_bcs(eqn), eqn, component, time, config)
+end
+
+function _apply_bc_residuals!(
+    r::AbstractVector, model::Model{TN,SN,T,S}, BCs::B, eqn, component, time, config
+) where {TN,SN,T,S,B}
+    (; hardware) = config
+    (; backend, workgroup) = hardware
+    mesh = get_phi(eqn).mesh
+    A = _A(eqn)
+    phi_vals = get_values(get_phi(eqn), component)
+    (; faces, cells, boundary_cellsID) = mesh
+    colval = _colval(A)
+    rowptr = _rowptr(A)
+    nzval  = _nzval(A)
+    BCs_tuple = Tuple(BCs)
+    for BC ∈ BCs
+        update_user_boundary!(BC, faces, cells, BC.IDs_range, time, config)
+    end
+    nbfaces = length(mesh.boundary_cellsID)
+    if nbfaces > 0
+        kernel! = _bc_residuals_kernel!(_setup(backend, workgroup, nbfaces)...)
+        kernel!(
+            r, phi_vals, model, BCs_tuple, model.terms,
+            faces, cells, boundary_cellsID, colval, rowptr, nzval, component, time,
+            ndrange=nbfaces
+        )
+        KernelAbstractions.synchronize(backend)
+    end
+end
+
+@kernel function _bc_residuals_kernel!(
+    r::AbstractArray{F}, phi_vals::AbstractArray{F},
+    model::Model{TN,SN,T,S}, BCs, terms,
+    faces, cells, boundary_cellsID, colval, rowptr, nzval, component, time
+) where {F,TN,SN,T,S}
+    fID = @index(Global)
+    _accumulate_bc_residual!(
+        r, phi_vals, BCs, model, terms,
+        faces, cells, boundary_cellsID, colval, rowptr, nzval, component, time, fID
+    )
+end
+
+function _accumulate_bc_residual!(
+    r, phi_vals, BCs, model, terms,
+    faces, cells, boundary_cellsID, colval, rowptr, nzval, component, time, fID
+)
+    for BC ∈ BCs
+        (; start, stop) = BC.IDs_range
+        if start <= fID <= stop
+            i       = fID - start + 1
+            cellID  = boundary_cellsID[fID]
+            face    = faces[fID]
+            cell    = cells[cellID]
+            zcellID = spindex(rowptr, colval, cellID, cellID)
+            AP, BP  = apply!(
+                model, BC, terms,
+                colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+            )
+            Atomix.@atomic r[cellID] += AP * phi_vals[cellID] - BP
+            return nothing
+        end
+    end
+    return nothing
 end
 
 # Boundary indices generated function definition

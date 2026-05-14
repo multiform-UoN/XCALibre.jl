@@ -38,8 +38,8 @@
 #        PRIMARY path — production-ready, default, handles all BCs and operators.
 #
 #   B. Matrix-free residual evaluation:
-#        bc_residual(bc::Dirichlet, ...) → scalar flux contribution
-#        residual_ops! kernel → R(φ) without forming A.
+#        Operator-specific kernels: Dirichlet → D_f*(φ_P−value), Zerogradient → 0
+#        full_residual! → R(φ) without forming A.
 #        COMPLEMENTARY path — for JFNK inner loops, GPU Newton,
 #        convergence monitoring without re-assembling A.
 #
@@ -63,9 +63,19 @@
 #
 #   Matrix-free does NOT replace assembled FV; it COMPLEMENTS it.
 #   For simple linear problems on CPU, assembled FV is always preferred.
+#
+# NOTE ON BC LOWERING IN REALIZATION B
+# -------------------------------------
+# Realization B uses operator-specific kernels for BCs — the Laplacian stencil
+# formula is embedded in the Dirichlet kernel body. This is correct: the BC
+# residual formula depends on both the BC type AND the operator (Laplacian here).
+# For nonlinear BCs (NonLinearRobin), see bc_ops.jl and prototype_D_bc_lowering.jl.
+# Standard linear BCs use @define_boundary as the single source of truth; the
+# operator-specific kernels below are consistent with that but live separately.
 
 using XCALibre
 using KernelAbstractions
+using Atomix
 using LinearAlgebra
 using SparseArrays
 using StaticArrays
@@ -73,9 +83,8 @@ using SparseMatricesCSR
 using Test
 using Printf
 
-# We need the interior residual kernel (Prototype A) and the Op types
-include("prototype_A_laplacian_residual.jl")   # → laplacian_residual!
-include("bc_ops.jl")                            # → bc_residual/bc_jvp_coeff on BC types, residual_ops!, jvp_ops!
+# Interior residual kernel (Prototype A) — provides laplacian_residual!
+include("prototype_A_laplacian_residual.jl")
 
 # =============================================================================
 # SHARED SETUP — mesh, backend, fields
@@ -124,7 +133,7 @@ BCs = assign(region=mesh_dev, (C = [
 
 # Shared solver setup — also semantic: "use BiCGSTAB with Jacobi preconditioner"
 solver_setup = SolverSetup(solver=Bicgstab(), preconditioner=Jacobi(),
-                           convergence=1e-10, relax=1.0)
+                           convergence=1e-10, relax=1.0, rtol=1e-8)
 
 # Helper: set phi to the exact solution φ = 1 − x
 function set_exact!(phi)
@@ -144,6 +153,77 @@ config = Configuration(
     solvers    = (C = solver_setup,),
     boundaries = (C = BCs.C,)
 )
+
+# =============================================================================
+# MATRIX-FREE KERNEL FUNCTIONS (used by Realization B)
+# =============================================================================
+# These functions implement the same BC physics as @define_boundary, but as
+# explicit scatter-add kernels that avoid assembling a sparse matrix.
+#
+# Design: the Laplacian stencil formula (D_f = gamma*norm(Ef)/delta) is embedded
+# in the kernel body — the BC residual depends on both the BC type AND the
+# operator. This is why these live here (Laplacian-specific), not in a generic
+# "bc_residual" interface on BC types.
+#
+# For nonlinear BCs that cannot use @define_boundary, see bc_ops.jl.
+
+@kernel function _dirichlet_residual_kernel!(
+    r::AbstractArray{F},
+    phi::AbstractArray{F},
+    phi_bc::F,
+    gamma::AbstractArray{F},
+    faces,
+    cells,
+    boundary_cellsID,
+    patch_start::Int,
+    patch_stop::Int
+) where F
+    k = @index(Global)
+    fID = k + patch_start - 1
+    @inbounds begin
+        if fID <= patch_stop
+            cellID = boundary_cellsID[fID]
+            face   = faces[fID]
+            (; area, delta, normal, e) = face
+            Sf  = area * normal
+            Ef  = ((Sf ⋅ Sf) / (Sf ⋅ e)) * e
+            D_f = gamma[fID] * norm(Ef) / delta
+            Atomix.@atomic r[cellID] += D_f * (phi[cellID] - phi_bc)
+        end
+    end
+end
+
+function _mf_add_bc!(r, phi_vals, gamma_vals, BC::Dirichlet, mesh, backend, workgroup)
+    phi_bc = Float64(BC.value)
+    ps, pe = BC.IDs_range.start, BC.IDs_range.stop
+    ndrange = pe - ps + 1; ndrange == 0 && return
+    (; faces, cells, boundary_cellsID) = mesh
+    k! = _dirichlet_residual_kernel!(_setup(backend, workgroup, ndrange)...)
+    k!(r, phi_vals, phi_bc, gamma_vals, faces, cells, boundary_cellsID, ps, pe)
+    KernelAbstractions.synchronize(backend)
+end
+_mf_add_bc!(r, phi_vals, gamma_vals, ::Zerogradient, mesh, backend, workgroup) = nothing
+function _mf_add_bc!(r, phi_vals, gamma_vals, BC, mesh, backend, workgroup)
+    @warn "BC type $(typeof(BC)) not implemented in matrix-free path; skipping"
+end
+
+function full_residual!(r, phi_vals, gamma_vals, source, BCs::Tuple, mesh, backend, workgroup)
+    fill!(r, 0.0)
+    laplacian_residual!(r, phi_vals, gamma_vals, source, mesh, backend, workgroup)
+    for BC in BCs
+        _mf_add_bc!(r, phi_vals, gamma_vals, BC, mesh, backend, workgroup)
+    end
+end
+
+function full_jvp!(Jv, v, phi_vals, gamma_vals, source, BCs::Tuple, mesh, backend, workgroup;
+                   ε = sqrt(eps(eltype(phi_vals))))
+    n  = length(phi_vals)
+    r0 = zeros(eltype(phi_vals), n)
+    r1 = zeros(eltype(phi_vals), n)
+    full_residual!(r0, phi_vals,           gamma_vals, source, BCs, mesh, backend, workgroup)
+    full_residual!(r1, phi_vals .+ ε .* v, gamma_vals, source, BCs, mesh, backend, workgroup)
+    @. Jv = (r1 - r0) / ε
+end
 
 # =============================================================================
 # REALIZATION A1 — Assembled FV: low-level API
@@ -168,7 +248,7 @@ println("─" ^ 68)
 println("  Same Dirichlet/Zerogradient BCs as the semantic definition above.")
 println("  These are lowered into (ap, bp) pairs via @define_boundary functors.")
 
-L_plain = (-Laplacian{Linear}(gamma)) → BCs.C → solver_setup
+L_plain = ((-Laplacian{Linear}(gamma)) → BCs.C) → solver_setup
 eqn_a1 = L_plain(phi)
 
 reset_phi!()
@@ -239,16 +319,12 @@ println("  Realization A2 ✓ (identical solution to A1 — same assembled path)
 #     @define_boundary Dirichlet Laplacian{Linear} → (ap, bp) → CSR row modify
 #
 #   Matrix-free path (B):
-#     bc_residual(bc::Dirichlet, φ_P, face, γ) → D_f·(φ_P − value), scatter-add
+#     Operator-specific kernel: _dirichlet_residual_kernel! → D_f*(φ_P−value)
+#     Zerogradient: zero contribution (no kernel call)
 #
-# The bc_residual/bc_jvp_coeff methods live on the existing Dirichlet/Zerogradient
-# types (defined in bc_ops.jl). The same BC object works in both paths.
-#
-# Can bc_residual be used in an assembled context? YES (A3):
-#   For each BC face: A[cID,cID] += bc_jvp_coeff(bc, ...)  (diagonal fill)
-#                     b[cID] -= bc_residual(bc, 0, ...)      (RHS fill)
-# This would produce the same assembled system as A1/A2. Not implemented here,
-# but the interface supports it.
+# The operator-specific kernel encodes the same D_f formula as @define_boundary.
+# There is ONE source of truth: the Laplacian stencil formula. It appears in
+# @define_boundary and in the kernel body — consistent by construction.
 #
 # IMPORTANT: This does NOT solve the equation — it evaluates the residual.
 # For solving, combine with the assembled solver (hybrid) or a matrix-free
@@ -256,20 +332,17 @@ println("  Realization A2 ✓ (identical solution to A1 — same assembled path)
 
 println()
 println("─" ^ 68)
-println("REALIZATION B — Matrix-free residual evaluation (bc_residual + @kernel)")
+println("REALIZATION B — Matrix-free residual evaluation (operator-specific @kernel)")
 println("─" ^ 68)
-println("  The SAME semantic BCs lower into bc_residual() instead of (ap, bp).")
-println("  No CSR matrix is assembled.")
+println("  The SAME semantic BCs lower into operator-specific kernels.")
+println("  No CSR matrix is assembled. Same Dirichlet/Zerogradient objects as A1/A2.")
 
-# The SAME semantic BC objects (Dirichlet, Zerogradient) defined in the shared
-# setup are used directly for the matrix-free path. No conversion needed.
-# bc_residual and bc_jvp_coeff are methods on the existing types (bc_ops.jl).
-bc_ops = BCs.C
+BCs_tuple = BCs.C   # same BC objects, different lowering
 
 # ── B1: R(φ_exact) ≈ 0 ──────────────────────────────────────────────────────
 set_exact!(phi)
 r_exact = zeros(Float64, n_cells)
-residual_ops!(r_exact, phi.values, gamma.values, source, bc_ops, mesh_dev, backend, workgroup)
+full_residual!(r_exact, phi.values, gamma.values, source, BCs_tuple, mesh_dev, backend, workgroup)
 @printf "  R(φ_exact):  max|r| = %.2e  (expected ~machine epsilon)\n" maximum(abs, r_exact)
 @test maximum(abs, r_exact) < 1e-10
 
@@ -281,29 +354,28 @@ for i in 1:n_cells
 end
 
 r_mf = zeros(n_cells)
-residual_ops!(r_mf, phi.values, gamma.values, source, bc_ops, mesh_dev, backend, workgroup)
+full_residual!(r_mf, phi.values, gamma.values, source, BCs_tuple, mesh_dev, backend, workgroup)
 r_assembled = Vector(A * phi.values) .- b   # A, b from Realization A1
 err_r = maximum(abs, r_mf .- r_assembled)
 @printf "  R(φ) matrix-free vs assembled A·φ−b:  max|diff| = %.2e\n" err_r
 @test err_r < 1e-10
 println("  Both realizations express the same physics ✓")
 
-# ── B3: J(φ)·v via FD-JVP — two residual_ops! calls ─────────────────────────
+# ── B3: J(φ)·v via FD-JVP — two full_residual! calls ────────────────────────
 using Random; Random.seed!(7)
 v = randn(n_cells)
-Jv_mf       = zeros(n_cells)
+Jv_mf        = zeros(n_cells)
 Jv_assembled = Vector(A * v)
-jvp_ops!(Jv_mf, v, phi.values, gamma.values, source, bc_ops, mesh_dev, backend, workgroup)
+full_jvp!(Jv_mf, v, phi.values, gamma.values, source, BCs_tuple, mesh_dev, backend, workgroup)
 err_jvp = maximum(abs, Jv_mf .- Jv_assembled)
 @printf "  J(φ)·v FD-JVP vs assembled A·v:  max|diff| = %.2e  (O(ε) error)\n" err_jvp
 @test err_jvp < 1e-4
 println("  FD-JVP matches assembled matvec ✓")
 
 # ── B4: Hybrid use — assembled solver + matrix-free convergence monitor ───────
-# This is the most practical near-term use of the matrix-free path:
-# run the assembled solver, but track convergence by evaluating R(φ) directly.
-# Useful because (a) R(φ) is the true nonlinear residual, (b) it can be evaluated
-# without re-assembling A, and (c) the same R(φ) kernel works on GPU.
+# The most practical near-term use of the matrix-free path: run the assembled
+# solver, but track true residual by calling full_residual! without re-assembling.
+# The same full_residual! kernel works on GPU.
 println()
 println("  Hybrid demo: assembled solver + matrix-free residual monitor")
 reset_phi!()
@@ -312,7 +384,7 @@ eqn_hybrid = L_dsl(phi)
 r_monitor = zeros(n_cells)
 for iter in 1:3
     solve_equation!(eqn_hybrid, config)
-    residual_ops!(r_monitor, phi.values, gamma.values, source, bc_ops, mesh_dev, backend, workgroup)
+    full_residual!(r_monitor, phi.values, gamma.values, source, BCs_tuple, mesh_dev, backend, workgroup)
     @printf "    iter %d: max|R(φ)| (matrix-free) = %.3e\n" iter maximum(abs, r_monitor)
 end
 @test maximum(abs, r_monitor) < 1e-8
@@ -342,16 +414,16 @@ println("  ├────────────────┼─────
 println("  │ A2: DSL        │ Same as A1               │ Composable/reusable     │")
 println("  │    Assembled   │ (→ is syntactic sugar)   │ equation definitions    │")
 println("  ├────────────────┼──────────────────────────┼─────────────────────────┤")
-println("  │ B:  Matrix-    │ bc_residual(Dirichlet,)  │ JFNK inner loop,        │")
-println("  │     free       │ → R(φ) via @kernel       │ GPU Newton, monitoring  │")
+println("  │ B:  Matrix-    │ operator-specific @kernel│ JFNK inner loop,        │")
+println("  │     free       │ → R(φ) via full_residual!│ GPU Newton, monitoring  │")
 println("  └────────────────┴──────────────────────────┴─────────────────────────┘")
 println()
 println("  Realizations A1 and A2 are PRIMARY (production-ready, full operator/BC coverage).")
 println("  Realization B is COMPLEMENTARY — specialised for matrix-free/JFNK/GPU contexts.")
 println()
 println("  For JFNK (next step), plug B into a matrix-free Krylov solver:")
-println("    r  = residual_ops!(r, φ_k, ...)       # R(φ_k)")
-println("    Jv = jvp_ops!(Jv, v, φ_k, ...)        # J(φ_k)·v  (two kernel calls)")
+println("    r  = full_residual!(r, φ_k, ...)       # R(φ_k)")
+println("    Jv = full_jvp!(Jv, v, φ_k, ...)        # J(φ_k)·v  (two kernel calls)")
 println("    # → feed r and Jv into GMRES/BiCGSTAB → matrix-free Newton update")
 println()
 println("All tests passed.")
