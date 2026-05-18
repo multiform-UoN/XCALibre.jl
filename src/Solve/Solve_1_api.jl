@@ -565,15 +565,27 @@ function _residual_equation(eqn; susp=false, ad_backend=:forwarddiff)
     return lin_eqn
 end
 
+# residual!(r, eqn, config)  — FULL residual (interior + BC faces).
+#
+# Two computation paths — both discrete, both correct for linear problems:
+#
+#   explicit=false (default): assembled path — r = A·φ − b.
+#     BCs are already in A and b from the assembly step (fvm:: style).
+#     Pass assemble=false to skip re-assembly when A is already up to date.
+#
+#   explicit=true: explicit operator path — evaluates fluxes directly on φ
+#     without going through the assembled matrix (fvc:: style in OpenFOAM).
+#     Uses explicit_residual! (interior faces) + apply_bc_residuals! (BC faces).
+#     Required for JFNK/Newton inner loops where φ changes between evaluations.
+#
+# See also: explicit_residual! for interior-only explicit evaluation (no BC).
 function residual!(
     r, eqn::ModelEquation{T,M,E,S,P}, config; component=nothing, time=nothing,
-    assemble=true, matrix_free=false, susp=false, ad_backend=:forwarddiff
+    assemble=true, explicit=false, susp=false, ad_backend=:forwarddiff
     ) where {T<:ScalarModel,M,E,S,P}
     eqn = _residual_equation(eqn; susp=susp, ad_backend=ad_backend)
     phi = get_phi(eqn)
-    if matrix_free
-        # Matrix-free path: interior kernel + BC residual kernel — no sparse matvec.
-        # Requires the equation to have been discretised at least once (for nzval layout).
+    if explicit
         fill!(r, zero(eltype(r)))
         explicit_residual!(r, eqn, phi, config)
         apply_bc_residuals!(r, eqn, config; component=component, time=time)
@@ -597,9 +609,9 @@ function jvp!(Jv::AbstractVector, v::AbstractVector, eqn::ModelEquation{T,M,E,S,
     ε0 = ε === nothing ? sqrt(eps(F)) : F(ε)
     r0 = similar(phi_vals)
     r1 = similar(phi_vals)
-    residual!(r0, eqn, config; component=component, time=time, matrix_free=true, assemble=false)
+    residual!(r0, eqn, config; component=component, time=time, explicit=true)
     @. phi_vals += ε0 * v
-    residual!(r1, eqn, config; component=component, time=time, matrix_free=true, assemble=false)
+    residual!(r1, eqn, config; component=component, time=time, explicit=true)
     @. phi_vals -= ε0 * v   # restore
     @. Jv = (r1 - r0) / ε0
     return Jv

@@ -469,11 +469,21 @@ end
 # ---------------------------------------------------------
 # PHASE 5: Matrix-Free Evaluation
 # ---------------------------------------------------------
-# NOTE: explicit_residual! computes INTERIOR-ONLY residual contributions.
-# cell.faces_range contains only interior face indices (by mesh topology design).
-# Boundary-face BC contributions are NOT included here.
-# To form the full residual (= assembled A·φ - b), add BC residual contributions
-# via a separate BC kernel pass (see examples/gpu_kernels/prototype_B_bc_residual.jl).
+# TWO RESIDUAL PATHS — keep these distinct:
+#
+#   explicit_residual!(r, eqn, phi, config)
+#     INTERIOR-ONLY explicit evaluation. Loops over cell.faces_range which
+#     contains only interior face indices by mesh topology design.
+#     BC face contributions are absent. Used internally as the interior half
+#     of the explicit path in residual!(explicit=true).
+#
+#   residual!(r, eqn, config)            ← the one users should call
+#     FULL residual = interior + BC contributions. Two paths:
+#       explicit=false (default): A·φ − b from the assembled sparse matrix
+#                                 (fvm:: style — BCs already in A and b)
+#       explicit=true:            explicit_residual! + apply_bc_residuals!
+#                                 (fvc:: style — re-evaluates fluxes directly)
+#     Both give the same result for linear problems.
 
 function explicit_residual!(r::AbstractVector, eqn::ModelEquation{T,M,E,S,P}, phi, config) where {T<:ScalarModel,M,E,S,P}
     (; hardware, runtime) = config
