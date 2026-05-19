@@ -91,3 +91,23 @@ end
 function decompose(eqn::ModelEquation{ScalarModel, M, E, S, P, ST}) where {M,E,S,P,ST}
     return [eqn]
 end
+
+# Decompose for PDEOperator (used when building monolithic systems from DSL)
+function decompose(L::PDEOperator)
+    # If the templates are already bound Operators, we can treat it as a ScalarEquation
+    if length(L.templates) > 0 && !(L.templates[1] isa OperatorTemplate)
+        phi = L.templates[1].phi
+        model = Model{length(L.templates), length(L.sources)}(L.templates, L.sources)
+        return [ModelEquation(ScalarModel(), model, ScalarEquation(phi, L.BCs), nothing, nothing, L.setup)]
+    end
+    error("PDEOperator must be bound to a field (e.g. L(phi)) before it can be decomposed for a monolithic system.")
+end
+
+# Decompose for Model
+function decompose(model::Model)
+    if length(model.terms) > 0
+        phi = model.terms[1].phi
+        return [ModelEquation(ScalarModel(), model, ScalarEquation(phi, ()), nothing, nothing, nothing)]
+    end
+    error("Model must have at least one term with a bound field to be decomposed.")
+end

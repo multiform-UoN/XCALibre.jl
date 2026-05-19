@@ -6,7 +6,7 @@ export Biharmonic
 export GradDiv
 export ScalarGrad, VectorDiv
 export MonolithicSystem
-export Model, ScalarEquation, VectorEquation, ModelEquation, ScalarModel, VectorModel
+export Model, ScalarModel, VectorModel, ModelEquation, ScalarEquation, VectorEquation
 export nzval_index
 export spindex, spindex_csc
 export nzadd!
@@ -158,7 +158,7 @@ struct NonLinearSi{Fun}
     func::Fun
 end
 function Adapt.adapt_structure(to, itp::NonLinearSi{Fun}) where {Fun}
-    NonLinearSi{Fun}(itp.func)   # inner constructor — bypasses outer dispatch
+    NonLinearSi{Fun}(itp.func)
 end
 
 # Higher-order operator type tag (4th-order biharmonic: Δ²ϕ)

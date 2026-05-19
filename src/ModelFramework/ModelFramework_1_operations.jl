@@ -136,6 +136,17 @@ Base.:(==)(a::Vector{<:AbstractOperator}, b::Vector{<:Src}) = begin
     Model{length(a), length(b)}((a...,),(b...,))
 end
 
+(→)(model::Model{TN,SN,T,S}, BCs::Tuple) where {TN,SN,T,S} = begin
+    phi = model.terms[1].phi # Heuristic: first term determines the field
+    if typeof(phi) <: ScalarField
+        ModelEquation(ScalarModel(), model, ScalarEquation(phi, BCs), nothing, nothing, nothing)
+    elseif typeof(phi) <: VectorField
+        ModelEquation(VectorModel(), model, VectorEquation(phi, BCs), nothing, nothing, nothing)
+    end
+end
+
+(→)(model::Model{TN,SN,T,S}, BCs::AbstractVector) where {TN,SN,T,S} = model → Tuple(BCs)
+
 (→)(model::Model{TN,SN,T,S}, eqn::AbstractEquation) where {TN,SN,T,S}= begin
     # To-do: Add runtime check to ensure both sides are consistent (for now document)
     if S.parameters[1].parameters[1] <: AbstractScalarField

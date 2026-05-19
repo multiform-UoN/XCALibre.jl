@@ -7,20 +7,22 @@ using Statistics
 # ==============================================================================
 # Example: Cahn-Hilliard Phase-Field (Monolithic Block-Coupled Solver)
 # ==============================================================================
-# PDE (strong form):
-#   ∂ϕ/∂t = M ∇²μ                          [mass balance]
-#   μ = f'(ϕ) - κ ∇²ϕ                       [chemical potential definition]
+# This script solves the Cahn-Hilliard equations in a monolithic block-coupled 
+# system.
 #
-# where f(ϕ) = (1 - ϕ²)²/4  →  f'(ϕ) = ϕ³ - ϕ   (quadratic double well)
+# Governing Equations (Mixed Formulation):
+# 1. ∂t ϕ - ∇ ⋅ (M(ϕ) ∇μ) = 0
+# 2. μ = ψ'(ϕ) - κ ∇²ϕ
 #
-# Weak / FVM form solved per time step (linearising f'(ϕ) around ϕ^n):
-#   [I/Δt    -M∇²] [ϕ]   [ϕ^n/Δt      ]
-#   [-κ∇²  +I    ] [μ] = [f'(ϕ^n) + ...]
+# Where ψ(ϕ) = (ϕ² - 1)² / 4 is the double-well potential.
 #
-# This is a 2×2 block system. The monolithic solver assembles it into a single
-# (2*n_cells)×(2*n_cells) CSR matrix and solves with BiCGSTAB.
+# Linearization of ψ'(ϕ):
+# ψ'(ϕ) = ϕ³ - ϕ
+# Newton expansion: ψ'(ϕ) ≈ (3ϕ₀² - 1)ϕ - 2ϕ₀³
 #
-# BCs: no-flux on all boundaries (∇ϕ·n = 0, ∇μ·n = 0)
+# Block System:
+# [ 1/dt    -M∇² ] [ ϕ ]   [ ϕ_old/dt ]
+# [ κ∇² - (3ϕ₀²-1)   1   ] [ μ ] = [ -2ϕ₀³ ]
 # ==============================================================================
 
 # 1. Setup Mesh
@@ -34,121 +36,94 @@ mesh_dev = adapt(backend, mesh)
 n_cells = length(mesh_dev.cells)
 
 # 2. Phase-field parameters
-kappa  = 1e-2  # interface thickness parameter
-M_mob  = 1e-1  # mobility (larger value for visible dynamics in this demo)
-dt     = 1e-2  # time step
+kappa  = 1e-4  # interface thickness
+M_mob  = 1e-3  # mobility
+dt     = 0.01  # time step
 
 # 3. BCs: no-flux for ϕ and μ
 BCs = assign(
-    region=mesh_dev,
     (
-        phi = [Zerogradient(b.name) for b in mesh.boundaries],
-        mu  = [Zerogradient(b.name) for b in mesh.boundaries],
-    )
+        phi = [Zerogradient(:inlet), Zerogradient(:outlet), Zerogradient(:bottom), Zerogradient(:top)],
+        mu  = [Zerogradient(:inlet), Zerogradient(:outlet), Zerogradient(:bottom), Zerogradient(:top)]
+    ),
+    region=mesh_dev
 )
 
-schemes = (
-    phi = Schemes(time=Euler, laplacian=Linear),
-    mu  = Schemes(laplacian=Linear),
-)
-solvers = (
-    phi = SolverSetup(solver=Bicgstab(), preconditioner=Jacobi(), convergence=1e-8, relax=1.0),
-)
-runtime  = Runtime(iterations=1, write_interval=-1, time_step=dt)
-config   = Configuration(solvers=solvers, schemes=schemes, runtime=runtime,
-                         hardware=hardware, boundaries=BCs)
+# 4. Fields initialization
+phi = ScalarField(mesh_dev)
+mu  = ScalarField(mesh_dev)
+initialise!(mu, 0.0)
 
-# 4. Fields
-phi    = ScalarField(mesh_dev)
-mu     = ScalarField(mesh_dev)
-phi_n  = ScalarField(mesh_dev)      # previous time step
-fp_src = ScalarField(mesh_dev)      # f'(ϕ^n) source for μ equation
-
-# Initialise ϕ: tanh interface in x-direction
+# Initialise ϕ: tanh interface in x-direction + noise
 for cID in 1:n_cells
     x = mesh_dev.cells[cID].centre[1]
     L = maximum(mesh_dev.cells[cID2].centre[1] for cID2 in 1:n_cells)
-    phi.values[cID] = tanh((x - L/2) / (2*sqrt(kappa))) + 0.01 * randn()
+    phi.values[cID] = tanh((x - L/2) / (2*sqrt(kappa))) + 0.01*randn()
 end
 
-@printf("Initial phase: mean(ϕ) = %.4f, interface count ≈ %d cells\n",
-        mean(phi.values), sum(abs.(phi.values) .< 0.9))
+phi_old = ScalarField(mesh_dev); phi_old.values .= phi.values
 
-# 5. Monolithic Cahn-Hilliard loop
-n_steps    = 20
-write_every = 5
-
+# 5. Iterative Simulation Loop
+n_steps = 20
 @info "Running monolithic Cahn-Hilliard for $n_steps steps..."
+
+# Global settings for monolithic solve
+schemes = (phi = Schemes(laplacian=Linear), mu = Schemes(laplacian=Linear))
+# Use a stiff-aware solver setup
+solvers = (phi = SolverSetup(solver=Bicgstab(), preconditioner=Jacobi(), convergence=1e-12, relax=1.0),)
+
 for step in 1:n_steps
-    global phi, mu, phi_n, fp_src
+    # 5.1 Linearize ψ'(ϕ) ≈ (3ϕ₀² - 1)ϕ - 2ϕ₀³
+    # We use CoupledSi to add -(3ϕ₀²-1) to the (2,1) block.
+    # And Source(-2ϕ₀³) to the RHS of row 2.
+    
+    phi0 = phi.values
+    k_lin = ScalarField(mesh_dev)
+    k_lin.values .= -(3.0 .* phi0.^2 .- 1.0) # -ψ''(ϕ₀)
+    
+    s_lin = ScalarField(mesh_dev)
+    s_lin.values .= -2.0 .* phi0.^3 # Explicit part
+    
+    phi_rhs = ScalarField(mesh_dev)
+    phi_rhs.values .= phi_old.values ./ dt
 
-    # Cache previous ϕ^n
-    phi_n.values .= phi.values
+    # 5.2 Define Monolithic System
+    # Eq 1: ϕ/dt - M∇²μ = ϕ_old/dt
+    eqn1 = (
+        Si(ConstantScalar(1.0/dt), phi) 
+        - Laplacian{Linear}(ConstantScalar(M_mob), mu) 
+        == 
+        Source(phi_rhs)
+    ) → BCs.phi
 
-    # Compute explicit source for μ equation:
-    # f'(ϕ^n) = ϕ^n³ - ϕ^n  (linearised double-well derivative)
-    fp_src.values .= phi_n.values.^3 .- phi_n.values
+    # Eq 2: μ + κ∇²ϕ - (3ϕ₀²-1)ϕ = -2ϕ₀³
+    eqn2 = (
+        Si(ConstantScalar(1.0), mu) 
+        + Laplacian{Linear}(ConstantScalar(kappa), phi)
+        + CoupledSi(k_lin, phi) 
+        == 
+        Source(s_lin)
+    ) → BCs.mu
 
-    # Build block-coupled system:
-    #
-    # Eq 1 (ϕ row):  ϕ/Δt - M∇²μ = ϕ^n/Δt
-    #   - Time{Euler}(phi)             → adds ϕ/Δt to diagonal AND ϕ^n/Δt to RHS
-    #   - Laplacian{Linear}(M, mu)     → adds -M∇²μ to block (1,2) off-diagonal
-    #
-    # Eq 2 (μ row):  -κ∇²ϕ + μ = f'(ϕ^n)
-    #   - Laplacian{Linear}(kappa, phi) → -κ∇²ϕ in block (2,1) off-diagonal
-    #   - Si(ConstantScalar(1.0), mu)   → +μ diagonal in block (2,2)
-    #   - Source(fp_src)                → f'(ϕ^n) on RHS
-
-    M_coeff     = ConstantScalar(M_mob)
-    kappa_coeff = ConstantScalar(kappa)
-
-    phi_eqn = (
-          Time{schemes.phi.time}(phi)
-        - Laplacian{schemes.phi.laplacian}(M_coeff, mu)   # cross-field: couples to μ
-        ==
-        Source(ConstantScalar(0.0))
-    ) → ScalarEquation(phi, BCs.phi)
-
-    mu_eqn = (
-        - Laplacian{schemes.mu.laplacian}(kappa_coeff, phi)  # cross-field: couples to ϕ
-        + Si(ConstantScalar(1.0), mu)                        # μ on diagonal
-        ==
-        Source(fp_src)
-    ) → ScalarEquation(mu, BCs.mu)
-
-    # Monolithic solve
-    sys = MonolithicSystem([phi_eqn, mu_eqn], [phi, mu])
-    res = solve_monolithic!(sys, (BCs.phi, BCs.mu), config)
-
-    if step % write_every == 0
-        free_energy = mean((1 .- phi.values.^2).^2) / 4
-        @printf("Step %3d: res=%.2e  mean(ϕ)=%.4f  bulk_free_energy≈%.4e\n",
-                step, res, mean(phi.values), free_energy)
+    # 5.3 Solve
+    sys = MonolithicSystem([eqn1, eqn2], [phi, mu])
+    
+    # We must pass hardware and runtime inside config
+    config = Configuration(solvers=solvers, schemes=schemes, runtime=Runtime(iterations=1, time_step=dt, write_interval=-1), hardware=hardware, boundaries=BCs)
+    
+    res = solve_monolithic!(sys, (BCs.phi, BCs.mu), config; use_preconditioner=true)
+    
+    phi_old.values .= phi.values
+    
+    if step % 5 == 0
+        @printf("Step %3d: res=%.2e  mean(ϕ)=%.4f  min/max=%.2f/%.2f\n", 
+                step, res, mean(phi.values), minimum(phi.values), maximum(phi.values))
     end
 end
 
-# 6. Postprocessing
-@printf("\nFinal Results (Cahn-Hilliard monolithic):\n")
-@printf("  Mean ϕ   = %.6f\n", mean(phi.values))
-@printf("  Vol-avg ϕ = %.6f\n", volume_average(phi))
-@printf("  Mean μ   = %.6f\n", mean(mu.values))
+# 6. Save Results
+@info "Saving Results..."
+ENV["XC_VTK_DIR"] = pwd()
+save_vtk("cahn_hilliard", mesh_dev, BCs.phi, ("phi", phi), ("mu", mu))
 
-# Weighted integrals (useful for homogenisation-style analyses)
-phi_avg = volume_average(phi)
-mu_avg  = volume_average(mu)
-@printf("  <ϕ>  = %.6f,  <μ>  = %.6f\n", phi_avg, mu_avg)
-
-# Interface energy: ∫ κ/2 |∇ϕ|² dV ≈ κ/2 ∫ |ϕ(1-ϕ²)/Δx|² dV (rough estimate)
-# Use weighted_volume_integral with a point-wise energy density weight
-interface_weight(x, y, z) = 1.0   # uniform → just total volume integral
-bulk_free_energy = weighted_volume_integral(phi, (x,y,z) -> (1 - phi.values[1])^2 / 4) # approx
-@printf("  Bulk free energy ∫f(ϕ) dV = %.6e\n",
-        volume_integral(phi) * mean((1 .- phi.values.^2).^2) / 4)
-
-# 7. VTK output
-@info "Saving VTK output..."
-writer = initialise_writer(VTK(), mesh_dev)
-write_results(1, 1.0, mesh_dev, writer, BCs, ("phi", phi), ("mu", mu))
-
-@info "Cahn-Hilliard (monolithic) example completed!"
+@info "Cahn-Hilliard example completed!"

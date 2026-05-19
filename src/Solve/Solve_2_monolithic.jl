@@ -1,5 +1,17 @@
 export solve_monolithic!, newton_solve!, monolithic_residual!, set_fields!, update_fields!
 export apply_monolithic_reference!
+export get_sparse_matrix
+
+function get_sparse_matrix(A_csr)
+    csr = hasproperty(A_csr, :parent) ? A_csr.parent : A_csr
+    I_row = Vector{Int64}(undef, length(csr.nzval))
+    for r in 1:(length(csr.rowptr)-1)
+        for i in csr.rowptr[r]:(csr.rowptr[r+1]-1)
+            I_row[i] = r
+        end
+    end
+    return sparse(I_row, csr.colval, csr.nzval, size(csr)...)
+end
 
 function _monolithic_solver_setup(config, use_preconditioner)
     config.solvers === nothing && return (solver=Gmres(), preconditioner=nothing)

@@ -134,15 +134,17 @@ function save_output(model::Physics{T,F,SO,M,Nothing,E,D,BI}, outputWriter, iter
 
     # Minimal output for pure energy/conduction solves
     args = []
-    if !isnothing(model.momentum)
-        if hasproperty(model.momentum, :U) push!(args, ("U", model.momentum.U)) end
-        if hasproperty(model.momentum, :p) push!(args, ("p", model.momentum.p)) end
+    if hasproperty(model, :momentum) && !isnothing(model.momentum)
+        if hasproperty(model.momentum, :U) && !isnothing(model.momentum.U) push!(args, ("U", model.momentum.U)) end
+        if hasproperty(model.momentum, :p) && !isnothing(model.momentum.p) push!(args, ("p", model.momentum.p)) end
     end
-    
-    if hasproperty(model.energy, :T)
-        push!(args, ("T", model.energy.T))
-    elseif hasproperty(model.energy, :he)
-        push!(args, ("he", model.energy.he))
+
+    if hasproperty(model, :energy) && !isnothing(model.energy)
+        if hasproperty(model.energy, :T) && !isnothing(model.energy.T)
+            push!(args, ("T", model.energy.T))
+        elseif hasproperty(model.energy, :he) && !isnothing(model.energy.he)
+            push!(args, ("he", model.energy.he))
+        end
     end
 
     write_results(iteration, time, model.domain, outputWriter, config.boundaries, args...)
