@@ -175,7 +175,16 @@ end
 
 function ModelPhysics.save_output(model::Physics{T,F,SO,M,Tu,E,D,BI}, outputWriter, iteration, time, config
     ) where {T,F,SO,M,Tu,E<:Conduction,D,BI}
-    
+
+    args = (
+        ("T", model.energy.T),
+    )
+    write_results(iteration, time, model.domain, outputWriter, config.boundaries, args...)
+end
+
+function ModelPhysics.save_output(model::Physics{T,F,SO,M,Nothing,E,D,BI}, outputWriter, iteration, time, config
+    ) where {T,F,SO,M,E<:Conduction,D,BI}
+
     args = (
         ("T", model.energy.T),
     )
