@@ -106,8 +106,12 @@ function _construct_periodic_topology_generic(mesh, patch1, patch2, translation,
             weight
         )
         push!(new_faces, new_periodic_face)
-        
-        new_fID = offset + i
+
+        # The periodic face is appended after all copied boundary/internal faces.
+        # Using `offset + i` here points into the copied internal-face block and
+        # corrupts cell connectivity whenever original internal faces exist.
+        # The ID must be the actual index of the newly appended periodic face.
+        new_fID = length(new_faces)
         push!(cell_to_periodic_faces[owner1], (new_fID, owner2, 1))
         push!(cell_to_periodic_faces[owner2], (new_fID, owner1, -1))
     end
