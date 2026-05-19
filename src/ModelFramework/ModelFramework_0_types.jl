@@ -1,6 +1,6 @@
 export AbstractOperator, AbstractSource, AbstractEquation
 export Operator, OperatorTemplate, PDEOperator, ScaledFlux, Source, Src
-export Time, TimeTerm, Laplacian, Divergence, Si, CoupledSi, NonLinearSi
+export Time, Laplacian, Divergence, Si, CoupledSi, NonLinearSi
 export NonlinearMap, NonlinearOperator, NonlinearOperatorTemplate, AffineOperator
 export Biharmonic
 export GradDiv
