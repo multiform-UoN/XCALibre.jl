@@ -69,10 +69,11 @@ end
 
 CoupledSi(flux, phi_source) = OperatorTemplate(flux, 1, CoupledSi(), phi_source)
 
+# operators
+
 struct Time{T} end
-struct TimeTerm{T} end
-function Adapt.adapt_structure(to, itp::TimeTerm{T}) where {T}
-    TimeTerm{T}()
+function Adapt.adapt_structure(to, itp::Time{T}) where {T}
+    Time{T}()
 end
 
 struct Laplacian{T} end
@@ -92,13 +93,13 @@ end
 
 # constructors
 
-Time{T}(flux) where T = OperatorTemplate(flux, 1, TimeTerm{T}())
+Time{T}(flux) where T = OperatorTemplate(flux, 1, Time{T}())
 Time{T}(flux, phi) where T = Operator(
-    flux, phi, 1, TimeTerm{T}()
+    flux, phi, 1, Time{T}()
     )
 
 Time{T}(phi::AbstractField) where T = Operator(
-    ConstantScalar(one(_get_int(phi.mesh))), phi, 1, TimeTerm{T}()
+    ConstantScalar(one(_get_int(phi.mesh))), phi, 1, Time{T}()
     )
 
 Laplacian{T}(flux) where T = OperatorTemplate(flux, 1, Laplacian{T}())
