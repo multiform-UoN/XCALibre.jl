@@ -39,15 +39,17 @@ for step in 1:10
     # Using the Biharmonic operator for the 4th order surface tension part.
     # This allows for implicit treatment of surface tension, ensuring stability
     # even at larger time steps.
-    L_h = ((
+    # Abstract PDE, chain BCs with →, apply to field: supports reuse with diff BC/field
+    pde = (
           Time{Euler}()
         + Biharmonic{Linear}(ConstantScalar(gamma * M_val))
         ==
         Source(0.0)
-    ) → BCs.h) → solvers.h
+    )
+    L = pde → BCs.h
+    h_eqn = L(h)
 
-    h_eqn = L_h(h)
-
+    @reset h_eqn.setup = solvers.h
     @reset h_eqn.preconditioner = set_preconditioner(solvers.h.preconditioner, h_eqn)
     @reset h_eqn.solver = XCALibre._workspace(solvers.h.solver, XCALibre._b(h_eqn))
 

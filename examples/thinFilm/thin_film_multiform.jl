@@ -147,15 +147,17 @@ for t_step in 1:n_steps
         # This provides significant numerical stability, allowing for much larger
         # time steps than traditional explicit treatments.
         
-        L_h = ((
+        # Abstract PDE def -> BCs -> apply to field (reusable pattern)
+        pde_h = (
               Time{Euler}()
             + Biharmonic{Linear}(ConstantScalar(gamma * mean(M_field.values))) # Implicit surface tension
-            - Laplacian{Linear}(M_face, p) # Mobility part (coupling to pressure)
+            - Laplacian{Linear}(M_face, p) # cross to p
             ==
             Source(0.0)
-        ) → BCs.h) → solvers.h
-
-        h_eqn = L_h(h)
+        )
+        L = pde_h → BCs.h
+        h_eqn = L(h)
+        @reset h_eqn.setup = solvers.h
         @reset h_eqn.preconditioner = set_preconditioner(solvers.h.preconditioner, h_eqn)
         @reset h_eqn.solver = XCALibre._workspace(solvers.h.solver, XCALibre._b(h_eqn))
 

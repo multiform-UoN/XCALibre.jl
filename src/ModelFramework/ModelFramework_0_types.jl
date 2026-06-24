@@ -97,6 +97,12 @@ Time{T}(flux, phi) where T = Operator(
     flux, phi, 1, TimeTerm{T}()
     )
 
+# Support passing ConstantScalar or Number as time coefficient (flux/storage)
+# for abstract PDE definitions, e.g. Time{Euler}(Se) where Se is storage coeff.
+# These produce OperatorTemplate (flux set, phi deferred for later bind).
+Time{T}(flux::ConstantScalar) where T = OperatorTemplate(flux, 1, TimeTerm{T}())
+Time{T}(flux::Number) where T = OperatorTemplate(ConstantScalar(flux), 1, TimeTerm{T}())
+
 Time{T}(phi::AbstractField) where T = Operator(
     ConstantScalar(one(_get_int(phi.mesh))), phi, 1, TimeTerm{T}()
     )
