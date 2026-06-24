@@ -126,7 +126,7 @@ Base.:(==)(a::Vector{<:AbstractOperator}, b::Src) = begin
 end
 
 Base.:(==)(a::Operator, b::Vector{<:Src}) = begin
-    Model{1,length(b)}((a...,),(b...,))
+    Model{1,length(b)}((a,),(b...,))
 end
 Base.:(==)(a::NonlinearOperator, b::Vector{<:Src}) = begin
     Model{1,length(b)}((a...,),(b...,))

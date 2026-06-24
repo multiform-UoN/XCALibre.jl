@@ -222,7 +222,7 @@ function CSIMPLE(
         @. model.energy.prevP = p.values
 
         # Set up and solve momentum equations
-        rx, ry, rz = solve_equation!(U_eqn, config)
+        rx, ry, rz = solve_equation!(U_eqn, config; rho_prev=rho)
 
         # Solve energy equation and update thermo properties
         energy!(energyModel, model, mdotf, ∇p, gradU, mueff, time, dt_cpu[1], config)

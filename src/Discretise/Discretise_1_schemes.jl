@@ -33,6 +33,18 @@ end
     return ac * term.jacobian[cID], b - ac * term.offset[cID]
 end
 
+@inline function scheme_source!(
+    term::AffineOperator, cell, cID, cIndex, prev, runtime, rho_prev
+)
+    ac, b = scheme_source!(term.op, cell, cID, cIndex, term.reference, runtime, rho_prev)
+    return ac * term.jacobian[cID], b - ac * term.offset[cID]
+end
+
+# Fallback for operators that do not require rho_prev
+@inline scheme_source!(
+    term::Operator, cell, cID, cIndex, prev, runtime, rho_prev
+) = scheme_source!(term, cell, cID, cIndex, prev, runtime)
+
 # TIME 
 
 # SteadyState
@@ -43,8 +55,9 @@ end
     0.0, 0.0 # add types if this approach works
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,TimeTerm{SteadyState}}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
-    0.0, 0.0
+    term::Operator{F,P,I,TimeTerm{SteadyState}}, cell, cID, cIndex, prev, runtime, rho_prev)  where {F,P,I} = begin
+    z = zero(cell.volume)
+    z, z
 end
 
 ## Euler
@@ -55,15 +68,24 @@ end
     0.0, 0.0 # add types if this approach works
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,TimeTerm{Euler}}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
+    term::Operator{F,P,I,TimeTerm{Euler}}, cell, cID, cIndex, prev, runtime, rho_prev)  where {F,P<:ScalarField,I} = begin
         volume = cell.volume
-        # To DO!!!!!
-        # flux below is for current time - need to also store previous flux
-        vol_rdt = term.flux[cID]*volume/runtime.dt[1]
+        vol_rdt = volume/runtime.dt[1]
+        rho = term.flux[cID]
+        
+        ac = rho * vol_rdt
+        b = rho_prev[cID]*prev[cID]*vol_rdt
+        return ac, b
+end
+@inline scheme_source!(
+    term::Operator{F,P,I,TimeTerm{Euler}}, cell, cID, cIndex, prev, runtime, rho_prev)  where {F,P<:VectorField,I} = begin # Special case for U_eqn (rho)
+        volume = cell.volume
+        vol_rdt = volume/runtime.dt[1]
+        rho = term.flux[cID]
         
         # Increment sparse and b arrays 
-        ac = vol_rdt
-        b = prev[cID]*vol_rdt
+        ac = rho * vol_rdt
+        b = rho_prev[cID]*prev[cID]*vol_rdt
         return ac, b
 end
 
@@ -75,13 +97,23 @@ end
     0.0, 0.0 # add types if this approach works
 end
 @inline scheme_source!(
-    term::Operator{F,P,I,TimeTerm{CrankNicolson}}, cell, cID, cIndex, prev, runtime)  where {F,P,I} = begin
+    term::Operator{F,P,I,TimeTerm{CrankNicolson}}, cell, cID, cIndex, prev, runtime, rho_prev)  where {F,P<:ScalarField,I} = begin
         volume = cell.volume
-        vol_rdt = term.flux[cID]*volume/runtime.dt[1]
+        vol_rdt = volume/runtime.dt[1]
+        rho = term.flux[cID]
         
-        # Increment sparse and b arrays 
-        ac = vol_rdt
-        b = prev[cID]*vol_rdt
+        ac = rho * vol_rdt
+        b = rho_prev[cID]*prev[cID]*vol_rdt # Careful with non U_eqn (e.g. T eqn.)
+        return ac, b
+end
+@inline scheme_source!(
+    term::Operator{F,P,I,TimeTerm{CrankNicolson}}, cell, cID, cIndex, prev, runtime, rho_prev)  where {F,P<:VectorField,I} = begin
+        volume = cell.volume
+        vol_rdt = volume/runtime.dt[1]
+        rho = term.flux[cID]
+        
+        ac = rho * vol_rdt
+        b = rho_prev[cID]*prev[cID]*vol_rdt
         return ac, b
 end
 

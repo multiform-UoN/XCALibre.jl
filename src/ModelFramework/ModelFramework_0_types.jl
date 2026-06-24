@@ -2,7 +2,7 @@ export AbstractOperator, AbstractSource, AbstractEquation
 export Operator, OperatorTemplate, PDEOperator, ScaledFlux, Source, Src
 export Time, TimeTerm, Laplacian, Divergence, Si, CoupledSi, NonLinearSi
 export NonlinearMap, NonlinearOperator, NonlinearOperatorTemplate, AffineOperator
-export Biharmonic
+export Biharmonic, _get_flux
 export GradDiv
 export ScalarGrad, VectorDiv
 export MonolithicSystem
@@ -152,6 +152,10 @@ struct AffineOperator{O<:Operator, J, C, R, Fn} <: AbstractOperator
     map::Fn
 end
 Adapt.@adapt_structure AffineOperator
+
+_get_flux(term::Operator) = term.flux
+_get_flux(term::AffineOperator) = _get_flux(term.op)
+_get_flux(term) = nothing
 
 # Type tag for nonlinear implicit source (linearised each outer iteration)
 struct NonLinearSi{Fun}

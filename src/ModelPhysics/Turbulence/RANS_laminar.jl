@@ -107,7 +107,7 @@ function save_output(model::Physics{T,F,SO,M,Tu,E,D,BI}, outputWriter, iteration
 end
 
 function save_output(model::Physics{T,F,SO,M,Tu,E,D,BI}, outputWriter, iteration, time, config
-    ) where {T,F<:Multiphase,SO,M,Tu<:Laminar,E,D,BI}
+    ) where {T,F<:Multiphase,SO,M,Tu<:Laminar,E<:Nothing,D,BI}
 
     args = (
         ("U", model.momentum.U), 
@@ -145,5 +145,13 @@ function save_output(model::Physics{T,F,SO,M,Nothing,E,D,BI}, outputWriter, iter
         push!(args, ("he", model.energy.he))
     end
 
+    write_results(iteration, time, model.domain, outputWriter, config.boundaries, args...)
+end
+
+function save_output(model::Physics{T,F,SO,M,Nothing,E,D,BI}, outputWriter, iteration, time, config
+    ) where {T,F,SO,M,E<:Conduction,D,BI}
+    args = (
+        ("T", model.energy.T),
+    )
     write_results(iteration, time, model.domain, outputWriter, config.boundaries, args...)
 end
