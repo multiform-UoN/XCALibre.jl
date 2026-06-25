@@ -562,7 +562,7 @@ face computes
     phi_gf[f] = -ghf[f] · area · snGrad(rho) · rDf[f]
 
 It is summed into `mdotf` before the pressure solve and reconstructed to
-a cell vector (`phi_g`) for the velocity correction. A face with 
+a cell vector (`phi_g`) for the velocity correction. A face with
 no density jump (single-phase region) contributes zero.
 """
 function phi_gf!(phi_gf, rho, ghf, rDf, model, config)
@@ -600,7 +600,7 @@ velocity (Rhie-Chow consistent). On each face computes
 
     ∇p_rghf_deconstructed[f] = (phi_gf[f] - snGrad(p_rgh)·area·rDf[f]) / (rDf[f])
 
-The result is a face scalar later reconstructed to a cell vector (`reconstruct!`) 
+The result is a face scalar later reconstructed to a cell vector (`reconstruct!`)
 and fed to `correct_velocity_rgh!`.
 """
 function pressure_grad!(p_rgh, ∇p_rghf_deconstructed, phi_gf, rDf, config)
@@ -952,7 +952,7 @@ end
         (; ownerCells) = face
         cID1 = ownerCells[1]
         cID2 = ownerCells[2]
-    
+
         fA = phiAf[i]
 
         lambda = if fA > zero(TF)

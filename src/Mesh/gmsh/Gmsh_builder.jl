@@ -22,11 +22,11 @@ function Gmsh2D_mesh(; scale=1, integer_type=Int64, float_type=Float64)
     TF = float_type
 
     println("Extracting Gmsh mesh data...")
-    
+
     # 1. Get Nodes
     nodeTags, coords, _ = gmsh.model.mesh.getNodes()
     n_nodes = length(nodeTags)
-    
+
     # Map Gmsh nodeTags to 1-based indices for XCALibre
     tag_to_idx = Dict{Int, TI}()
     points = Vector{UNV2.Point{TF}}(undef, n_nodes)
@@ -78,14 +78,14 @@ function Gmsh2D_mesh(; scale=1, integer_type=Int64, float_type=Float64)
     for (dim, tag) in physGroups
         name = gmsh.model.getPhysicalName(dim, tag)
         if isempty(name) name = "group_$tag" end
-        
+
         entities = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
         group_elements = TI[]
         for ent in entities
             _, tags, _ = gmsh.model.mesh.getElements(dim, ent)
             append!(group_elements, TI.(vcat(tags...)))
         end
-        
+
         loader = UNV2.BoundaryLoader(name, TI(tag), group_elements)
         push!(boundaryElements, loader)
     end
@@ -93,14 +93,14 @@ function Gmsh2D_mesh(; scale=1, integer_type=Int64, float_type=Float64)
     println("Generating mesh...")
     bfaces = UNV2.total_boundary_faces(boundaryElements)
     cells, faces, nodes, boundaries = UNV2.generate(points, elements, boundaryElements, bfaces)
-    
+
     println("Building connectivity...")
     UNV2.connect!(cells, faces, nodes, boundaries, bfaces)
-    
+
     # Use the intermediate UNV2.Mesh2 type
     mesh_intermediate = UNV2.Mesh2(cells, faces, boundaries, nodes)
     UNV2.process_geometry!(mesh_intermediate)
-    
+
     # Convert to the final XCALibre.Mesh.Mesh2 type
     mesh_final = UNV2.update_mesh_format(mesh_intermediate, TI, TF)
     println("Mesh ready!")
@@ -118,11 +118,11 @@ function Gmsh3D_mesh(; scale=1, integer_type=Int64, float_type=Float64)
     F = float_type
 
     println("Extracting 3D Gmsh mesh data...")
-    
+
     # 1. Get Nodes
     nodeTags, coords, _ = gmsh.model.mesh.getNodes()
     n_nodes = length(nodeTags)
-    
+
     # Map Gmsh nodeTags to 1-based indices
     tag_to_idx = Dict{Int, I}()
     points = Vector{UNV3.Point{F, SVector{3, F}}}(undef, n_nodes)
@@ -135,7 +135,7 @@ function Gmsh3D_mesh(; scale=1, integer_type=Int64, float_type=Float64)
     f_types, f_tags, f_nodes = gmsh.model.mesh.getElements(2)
     efaces = UNV3.Face{I, Vector{I}}[]
     face_tag_to_idx = Dict{Int, I}()
-    
+
     f_counter = 0
     for (t, tags, nodes) in zip(f_types, f_tags, f_nodes)
         npe = Int(gmsh.model.mesh.getElementProperties(t)[4])
@@ -150,7 +150,7 @@ function Gmsh3D_mesh(; scale=1, integer_type=Int64, float_type=Float64)
     # 3. Get 3D Cells
     c_types, c_tags, c_nodes = gmsh.model.mesh.getElements(3)
     cells_UNV = UNV3.Cell_UNV{I, Vector{I}}[]
-    
+
     c_counter = 0
     for (t, tags, nodes) in zip(c_types, c_tags, c_nodes)
         npe = Int(gmsh.model.mesh.getElementProperties(t)[4])
@@ -167,7 +167,7 @@ function Gmsh3D_mesh(; scale=1, integer_type=Int64, float_type=Float64)
     for (dim, tag) in physGroups
         name = gmsh.model.getPhysicalName(dim, tag)
         if isempty(name) name = "group_$tag" end
-        
+
         entities = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
         group_faces = I[]
         for ent in entities
@@ -180,14 +180,14 @@ function Gmsh3D_mesh(; scale=1, integer_type=Int64, float_type=Float64)
                 end
             end
         end
-        
+
         loader = UNV3.BoundaryElement(name, I(tag), group_faces)
         push!(boundaryElements, loader)
     end
 
     @info "Generating mesh connectivity and geometry from Gmsh data..."
     mesh = UNV3._build_UNV3D_mesh_core(points, efaces, cells_UNV, boundaryElements, I, F)
-    
+
     @info "Mesh constructed: $(length(mesh.nodes)) nodes | $(length(mesh.faces)) faces | $(length(mesh.cells)) cells."
     return mesh
 end

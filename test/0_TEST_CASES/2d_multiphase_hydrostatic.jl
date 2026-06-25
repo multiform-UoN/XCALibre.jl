@@ -7,7 +7,7 @@ using XCALibre
 using Test
 using LinearAlgebra
 
-scaling = 0.001 
+scaling = 0.001
 
 grids_dir = pkgdir(XCALibre, "examples/0_GRIDS")
 grid = "quad100.unv"
@@ -48,7 +48,7 @@ BCs = assign(
         U = [
             Wall(:inlet, noSlipVelocity),
             Wall(:outlet, noSlipVelocity),
-            Extrapolated(:top), 
+            Extrapolated(:top),
             Wall(:bottom, noSlipVelocity),
         ],
         p_rgh = [
@@ -90,7 +90,7 @@ solvers = (
         relax       = 1.0,
         rtol        = 0.0,
         atol        = 1.0e-7
-        
+
     ),
     alpha = SolverSetup(
         solver      = Bicgstab(), # Bicgstab(), Gmres(), Cg()

@@ -7,7 +7,7 @@ using KernelAbstractions
 # ==============================================================================
 # Multi-Directional Stokes Cell Problem (Permeability Tensor)
 # ==============================================================================
-# This script computes the effective permeability tensor K by solving the 
+# This script computes the effective permeability tensor K by solving the
 # Stokes cell problem for multiple forcing directions.
 #
 # METHODOLOGY:
@@ -26,7 +26,7 @@ function solve_stokes_direction(model, config, J_macro; pref=0.0)
     # Re-initialise fields for new direction
     initialise!(U, [0.0, 0.0, 0.0])
     initialise!(p, 0.0)
-    
+
     ∇p = Grad{schemes.p.gradient}(p)
     mdotf = FaceScalarField(mesh)
     rDf = FaceScalarField(mesh)
@@ -40,9 +40,9 @@ function solve_stokes_direction(model, config, J_macro; pref=0.0)
     # Use the new PDEOperator DSL for abstract definitions
     L_U = ((
           Time{schemes.U.time}()
-        + Divergence{schemes.U.divergence}(mdotf) 
-        - Laplacian{schemes.U.laplacian}(nueff) 
-        == 
+        + Divergence{schemes.U.divergence}(mdotf)
+        - Laplacian{schemes.U.laplacian}(nueff)
+        ==
         - Source(∇p.result) + Source(macro_grad)
     ) → boundaries.U) → solvers.U
 
@@ -63,17 +63,17 @@ function solve_stokes_direction(model, config, J_macro; pref=0.0)
     (; nu) = model.fluid
     (; iterations) = runtime
     n_cells = length(mesh.cells)
-    
+
     gradU = Grad{schemes.U.gradient}(U)
     gradUT = T(gradU)
     S = StrainRate(gradU, gradUT, U, Uf)
 
     Hv = VectorField(mesh)
     rD = ScalarField(mesh)
-    prev = KernelAbstractions.zeros(backend, _get_float(mesh), n_cells) 
+    prev = KernelAbstractions.zeros(backend, _get_float(mesh), n_cells)
 
     time = 0.0
-    interpolate!(Uf, U, config)   
+    interpolate!(Uf, U, config)
     XCALibre.correct_boundaries!(Uf, U, boundaries.U, time, config)
     flux!(mdotf, Uf, config)
     grad!(∇p, pf, p, boundaries.p, time, config)
@@ -94,7 +94,7 @@ function solve_stokes_direction(model, config, J_macro; pref=0.0)
         prev .= p.values
         rp = solve_equation!(p_eqn, config; ref=pref)
         explicit_relaxation!(p, prev, solvers.p.relax, config)
-        grad!(∇p, pf, p, boundaries.p, time, config) 
+        grad!(∇p, pf, p, boundaries.p, time, config)
         XCALibre.Solvers.correct_mass_flux!(mdotf, p_eqn, config)
         correct_velocity!(U, Hv, ∇p, rD, config)
         update_nueff!(nueff, nu, model.turbulence, config)
@@ -103,7 +103,7 @@ function solve_stokes_direction(model, config, J_macro; pref=0.0)
             break
         end
     end
-    
+
     # Calculate volume average velocity using built-in utility
     return volume_average(U)
 end

@@ -18,7 +18,7 @@ mesh_dev = adapt(backend, mesh)
 BCs_robin = assign(
     region = mesh_dev,
     (
-        T = [     
+        T = [
             Robin(:left_wall, a=1.0, b=0.0, value=50.0),
             Robin(:right_wall, a=0.0, b=1.0, value=0.0), # ZeroGradient
             Robin(:bottom_wall, a=1.0, b=0.0, value=10.0),
@@ -30,7 +30,7 @@ BCs_robin = assign(
 BCs_dirichlet = assign(
     region = mesh_dev,
     (
-        T = [     
+        T = [
             Dirichlet(:left_wall, 50.0),
             Zerogradient(:right_wall),
             Dirichlet(:bottom_wall, 10.0),
@@ -88,7 +88,7 @@ apply_boundary_conditions!(T_eqn_dirichlet, config_dirichlet; time=0.0)
 # Let's say a=1, b=1, value=100
 # denom = a*delta + b = delta + 1
 # delta for 3x3 unit mesh is 1/6 (distance from center (1/6) to face (0))?
-# Unit mesh is 1x1. 3x3 cells. Cell width = 1/3. 
+# Unit mesh is 1x1. 3x3 cells. Cell width = 1/3.
 # Distance from center to face = 1/6.
 # denom = 1/6 + 1 = 7/6.
 # For -Laplacian, the interior diagonal is positive and the Robin diagonal
@@ -99,7 +99,7 @@ apply_boundary_conditions!(T_eqn_dirichlet, config_dirichlet; time=0.0)
 BCs_mixed = assign(
     region = mesh_dev,
     (
-        T = [     
+        T = [
             Robin(:left_wall, a=1.0, b=1.0, value=100.0),
             Zerogradient(:right_wall),
             Zerogradient(:bottom_wall),

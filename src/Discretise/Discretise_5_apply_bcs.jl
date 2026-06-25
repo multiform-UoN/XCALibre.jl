@@ -32,7 +32,7 @@ function _apply_boundary_conditions!(
     rowptr = _rowptr(A)
     nzval = _nzval(A)
 
-    # Test implementation looking over all boundary faces 
+    # Test implementation looking over all boundary faces
     nbfaces = length(mesh.boundary_cellsID)
 
     # Ensure BCs is a Tuple for the @generated kernel unrolling
@@ -58,10 +58,10 @@ update_user_boundary!(
     BC::AbstractBoundary, faces, cells, facesID_range, time, config) = nothing
 
 # Apply boundary conditions kernel definition
-# Experimental implementation 
+# Experimental implementation
 
 @kernel function apply_boundary_conditions_kernel!(
-    model::Model{TN,SN,T,S}, BCs, terms, 
+    model::Model{TN,SN,T,S}, BCs, terms,
     faces, cells, boundary_cellsID, colval, rowptr, nzval, b, component, time
     ) where {TN,SN,T,S}
     fID = @index(Global)
@@ -72,8 +72,8 @@ end
 
 function calculate_coefficients(
     BCs, model, terms, faces, cells, boundary_cellsID, colval, rowptr, nzval, b, component, time, fID)
-    
-    # Non-generated loop over boundary patches. 
+
+    # Non-generated loop over boundary patches.
     # This is safe for both Tuple and Vector BCs.
     for BC ∈ BCs
         (; start, stop) = BC.IDs_range
@@ -81,11 +81,11 @@ function calculate_coefficients(
             i = fID - start + 1
             cellID = boundary_cellsID[fID]
             face = faces[fID]
-            cell = cells[cellID] 
+            cell = cells[cellID]
 
             zcellID = spindex(rowptr, colval, cellID, cellID)
             AP, BP = apply!(
-                model, BC, terms, 
+                model, BC, terms,
                 colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
                 )
             Atomix.@atomic nzval[zcellID] += AP
@@ -114,28 +114,28 @@ end
 
 
 
-# Current implementation 
+# Current implementation
 
 # @kernel function apply_boundary_conditions_kernel!(
-#     model::Model{TN,SN,T,S}, BC, terms, 
+#     model::Model{TN,SN,T,S}, BC, terms,
 #     faces, cells, start_ID, boundary_cellsID, colval, rowptr, nzval, b, component, time
 #     ) where {TN,SN,T,S}
 #     i = @index(Global)
 
-#     # Redefine thread index to correct starting ID 
+#     # Redefine thread index to correct starting ID
 #     j = i + start_ID - 1
 #     fID = j
 
 #     # Retrieve workitem cellID, cell and face
 #     cellID = boundary_cellsID[j]
 #     face = faces[fID]
-#     cell = cells[cellID] 
+#     cell = cells[cellID]
 
 #     zcellID = spindex(rowptr, colval, cellID, cellID)
 
 #     # Call apply generated function
 #     AP, BP = apply!(
-#         model, BC, terms, 
+#         model, BC, terms,
 #         colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
 #         )
 #     Atomix.@atomic nzval[zcellID] += AP
@@ -150,10 +150,10 @@ end
 
     # Definition of main assignment loop (one per patch)
     func_calls = Expr[]
-    for t ∈ 1:TN 
+    for t ∈ 1:TN
         call = quote
             ap, bp = BC(
-                terms[$t], 
+                terms[$t],
                 colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
                 )
             AP += F(ap)

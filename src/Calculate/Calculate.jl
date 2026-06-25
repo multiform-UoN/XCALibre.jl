@@ -7,6 +7,7 @@ using Adapt
 using Atomix
 using KernelAbstractions
 using GPUArrays
+import KernelAbstractions as KA
 
 using LinearAlgebra
 using SparseMatricesCSR

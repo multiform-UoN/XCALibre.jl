@@ -7,9 +7,9 @@ end
 Adapt.@adapt_structure NonLinearRobinValue
 
 struct NonLinearRobin{I,V,R<:UnitRange} <: AbstractBoundary
-    ID::I 
+    ID::I
     value::V
-    IDs_range::R 
+    IDs_range::R
 end
 Adapt.@adapt_structure NonLinearRobin
 
@@ -29,12 +29,12 @@ function update_nonlinear_robin!(BCs, field)
     mesh = field.mesh
     boundaries = mesh.boundaries
     boundary_cellsID = mesh.boundary_cellsID
-    
+
     # We assume the user has a NamedTuple of BCs for different fields
     # We look for Robin BCs that have a 'source_nonlinear' property or similar
     # For now, let's just make a manual mapping or a specific struct.
-    
-    # Better: The user provides the NonLinearRobin definitions, 
+
+    # Better: The user provides the NonLinearRobin definitions,
     # and we update the corresponding Robin BCs in the config.
 end
 
@@ -54,7 +54,7 @@ function linearize_boundary(bc::NonLinearRobin, c_val)
     # Use ForwardDiff to get f(c) and f'(c)
     f0 = f(c_val)
     df0 = ForwardDiff.derivative(f, c_val)
-    
+
     # grad(c).n = f(c)  =>  grad(c).n \approx f(c0) + f'(c0)(c - c0)
     # grad(c).n - f'(c0)c = f(c0) - f'(c0)c0
     # Robin: b*grad(c).n + a*c = value

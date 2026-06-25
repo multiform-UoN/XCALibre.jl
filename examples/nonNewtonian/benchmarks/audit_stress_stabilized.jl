@@ -2,10 +2,10 @@
 
 # XCALibre Stress-Operator Audit (Stabilized)
 #
-# Investigates how much implicit Laplacian stabilization (mu_s) is needed 
+# Investigates how much implicit Laplacian stabilization (mu_s) is needed
 # to recover a sensible result from the stress-coupled formulation.
 #
-# Goal: 
+# Goal:
 #   -mu_s Δu - div(τ) + ∇p = f
 #   τ = 2 mu_p ε(u)
 #   mu_s + mu_p = 1.0

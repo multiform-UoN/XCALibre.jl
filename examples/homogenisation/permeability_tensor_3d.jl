@@ -16,7 +16,7 @@ function solve_stokes_direction_3d(model, config, J_macro; pref=0.0)
     # Re-initialise fields
     initialise!(U, [0.0, 0.0, 0.0])
     initialise!(p, 0.0)
-    
+
     ∇p = Grad{schemes.p.gradient}(p)
     mdotf = FaceScalarField(mesh)
     rDf = FaceScalarField(mesh)
@@ -29,9 +29,9 @@ function solve_stokes_direction_3d(model, config, J_macro; pref=0.0)
 
     U_eqn = (
         Time{schemes.U.time}(U)
-        + Divergence{schemes.U.divergence}(mdotf, U) 
-        - Laplacian{schemes.U.laplacian}(nueff, U) 
-        == 
+        + Divergence{schemes.U.divergence}(mdotf, U)
+        - Laplacian{schemes.U.laplacian}(nueff, U)
+        ==
         - Source(∇p.result) + Source(macro_grad)
     ) → VectorEquation(U, boundaries.U)
 
@@ -49,17 +49,17 @@ function solve_stokes_direction_3d(model, config, J_macro; pref=0.0)
     (; nu) = model.fluid
     (; iterations) = runtime
     n_cells = length(mesh.cells)
-    
+
     gradU = Grad{schemes.U.gradient}(U)
     gradUT = T(gradU)
     S = StrainRate(gradU, gradUT, U, Uf)
 
     Hv = VectorField(mesh)
     rD = ScalarField(mesh)
-    prev = KernelAbstractions.zeros(backend, _get_float(mesh), n_cells) 
+    prev = KernelAbstractions.zeros(backend, _get_float(mesh), n_cells)
 
     time = 0.0
-    interpolate!(Uf, U, config)   
+    interpolate!(Uf, U, config)
     XCALibre.correct_boundaries!(Uf, U, boundaries.U, time, config)
     flux!(mdotf, Uf, config)
     grad!(∇p, pf, p, boundaries.p, time, config)
@@ -80,7 +80,7 @@ function solve_stokes_direction_3d(model, config, J_macro; pref=0.0)
         prev .= p.values
         rp = solve_equation!(p_eqn, p, boundaries.p, solvers.p, config; ref=pref)
         explicit_relaxation!(p, prev, solvers.p.relax, config)
-        grad!(∇p, pf, p, boundaries.p, time, config) 
+        grad!(∇p, pf, p, boundaries.p, time, config)
         XCALibre.Solvers.correct_mass_flux!(mdotf, p_eqn, config)
         correct_velocity!(U, Hv, ∇p, rD, config)
         update_nueff!(nueff, nu, model.turbulence, config)
@@ -90,14 +90,14 @@ function solve_stokes_direction_3d(model, config, J_macro; pref=0.0)
             break
         end
     end
-    
+
     # Calculate volume average velocity
     vols = [cell.volume for cell in mesh.cells]
     vol_tot = sum(vols)
     Ux_avg = sum(Array(U.x.values) .* vols) / vol_tot
     Uy_avg = sum(Array(U.y.values) .* vols) / vol_tot
     Uz_avg = sum(Array(U.z.values) .* vols) / vol_tot
-    
+
     return [Ux_avg, Uy_avg, Uz_avg]
 end
 

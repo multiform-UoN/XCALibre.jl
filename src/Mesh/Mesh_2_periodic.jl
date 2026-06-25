@@ -24,15 +24,15 @@ end
 function _construct_periodic_topology_generic(mesh, patch1, patch2, translation, tol, FaceType, MeshType)
     TI = _get_int(mesh)
     TF = _get_float(mesh)
-    
+
     # 1. Identify periodic face pairs
     b_idx1 = findfirst(x -> x.name == patch1, mesh.boundaries)
     b_idx2 = findfirst(x -> x.name == patch2, mesh.boundaries)
     @assert b_idx1 !== nothing && b_idx2 !== nothing "Periodic patches $patch1 or $patch2 not found."
-    
+
     range1 = mesh.boundaries[b_idx1].IDs_range
     range2 = mesh.boundaries[b_idx2].IDs_range
-    
+
     # Map from patch1 face ID to patch2 face ID
     # Note: translation is patch1 -> patch2
     periodic_map = Dict{Int, Int}()
@@ -50,34 +50,34 @@ function _construct_periodic_topology_generic(mesh, patch1, patch2, translation,
         end
         @assert found "Could not find periodic match for face $f1 on patch $patch1"
     end
-    
+
     # 2. Categorize all faces into: Kept Boundary, Original Internal, and New Periodic
     n_boundary_total = total_boundary_faces(mesh)
     boundary_mask = trues(n_boundary_total)
     for f1 in range1; boundary_mask[f1] = false; end
     for f2 in range2; boundary_mask[f2] = false; end
-    
+
     kept_boundary_indices = findall(boundary_mask)
     original_internal_indices = (n_boundary_total + 1):length(mesh.faces)
-    
+
     # 3. Build new faces array and ID mapping
     # New order: [kept_boundary_faces..., original_internal_faces..., new_periodic_faces...]
     new_faces = FaceType[]
     old_to_new_face = Dict{Int, Int}()
-    
+
     # Add kept boundary faces
     for (i, old_f) in enumerate(kept_boundary_indices)
         push!(new_faces, mesh.faces[old_f])
         old_to_new_face[old_f] = i
     end
-    
+
     # Add original internal faces
     offset = length(new_faces)
     for (i, old_f) in enumerate(original_internal_indices)
         push!(new_faces, mesh.faces[old_f])
         old_to_new_face[old_f] = offset + i
     end
-    
+
     # 4. Map cells to their new periodic faces
     cell_to_periodic_faces = [Tuple{Int, Int, Int}[] for _ in 1:length(mesh.cells)]
     periodic_f1_list = sort(collect(keys(periodic_map)))
@@ -85,16 +85,28 @@ function _construct_periodic_topology_generic(mesh, patch1, patch2, translation,
         f2 = periodic_map[f1]
         face1 = mesh.faces[f1]
         face2 = mesh.faces[f2]
-        
+
         owner1 = face1.ownerCells[1]
         owner2 = face2.ownerCells[1]
-        
+
         # Calculate periodic geometry using translated neighbor
         C1 = mesh.cells[owner1].centre
         C2_eff = mesh.cells[owner2].centre - translation
-        
-        weight, delta, e = weight_delta_e(face1.centre - C1, face1.centre - C2_eff, C2_eff - C1, face1.normal)
-        
+
+        C1C2 = C2_eff - C1
+        weight, delta, e = if norm(C1C2) < tol
+            # Degenerate case: cell centres coincide after translation shift
+            # (happens when inlet/outlet have the same normal direction and uniform grid).
+            # Fall back to face-normal stencil: place virtual C2 as mirror of C1 across face.
+            d1 = abs(dot(face1.centre - C1, face1.normal))
+            d2 = abs(dot(face2.centre - mesh.cells[owner2].centre, face1.normal))
+            delta_fb = d1 + d2
+            e_fb = normalize(face1.centre - C1)  # direction from C1 toward face
+            TF(0.5), TF(delta_fb), e_fb
+        else
+            weight_delta_e(face1.centre - C1, face1.centre - C2_eff, C1C2, face1.normal)
+        end
+
         new_periodic_face = FaceType(
             face1.nodes_range,
             SVector{2, TI}(owner1, owner2),
@@ -115,17 +127,17 @@ function _construct_periodic_topology_generic(mesh, patch1, patch2, translation,
         push!(cell_to_periodic_faces[owner1], (new_fID, owner2, 1))
         push!(cell_to_periodic_faces[owner2], (new_fID, owner1, -1))
     end
-    
+
     # 5. Rebuild connectivity structures for all cells
     new_cell_faces = TI[]
     new_cell_neighbours = TI[]
     new_cell_nsign = TI[]
     new_cells = Cell{TF, SVector{3,TF}, UnitRange{TI}}[]
-    
+
     for cID in 1:length(mesh.cells)
         cell = mesh.cells[cID]
         start_idx = length(new_cell_faces) + 1
-        
+
         # Add original internal faces (mapped)
         for fi in cell.faces_range
             old_fID = mesh.cell_faces[fi]
@@ -134,18 +146,18 @@ function _construct_periodic_topology_generic(mesh, patch1, patch2, translation,
             push!(new_cell_neighbours, mesh.cell_neighbours[fi])
             push!(new_cell_nsign, mesh.cell_nsign[fi])
         end
-        
+
         # Add new periodic faces
         for (fID, nID, nsign) in cell_to_periodic_faces[cID]
             push!(new_cell_faces, fID)
             push!(new_cell_neighbours, nID)
             push!(new_cell_nsign, nsign)
         end
-        
+
         stop_idx = length(new_cell_faces)
         push!(new_cells, Cell(cell.centre, cell.volume, cell.nodes_range, UnitRange{TI}(start_idx, stop_idx)))
     end
-    
+
     # 6. Rebuild Boundary metadata
     new_boundaries = Boundary{Symbol, UnitRange{TI}}[]
     curr_b_idx = 1
@@ -159,13 +171,13 @@ function _construct_periodic_topology_generic(mesh, patch1, patch2, translation,
             curr_b_idx += length(old_range)
         end
     end
-    
+
     # 7. Rebuild boundary_cellsID
     new_boundary_cellsID = TI[]
     for old_f in kept_boundary_indices
         push!(new_boundary_cellsID, mesh.boundary_cellsID[old_f])
     end
-    
+
     # 8. Final Mesh object
     return MeshType(
         new_cells,

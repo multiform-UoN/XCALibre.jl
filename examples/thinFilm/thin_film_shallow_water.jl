@@ -34,7 +34,7 @@ for step in 1:10
     global h
     # Mobility M = h³/3μ.
     M_val = mean(h.values)^3 / (3.0 * mu)
-    
+
     # ── Define Abstract PDE for Height ────────────────────────────────────────
     # Using the Biharmonic operator for the 4th order surface tension part.
     # This allows for implicit treatment of surface tension, ensuring stability

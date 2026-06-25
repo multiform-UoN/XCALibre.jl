@@ -51,12 +51,12 @@ function decompose(eqn::ModelEquation{VectorModel, M, E, S, P, ST}) where {M,E,S
     psi = get_phi(eqn)
     comps = decompose(psi)
     bcs = get_bcs(eqn)
-    
+
     scalar_eqns = []
     for (i, phi_comp) in enumerate(comps)
         # 1. Decompose Boundary Conditions
         comp_bcs = decompose_bcs(bcs, i)
-        
+
         # 2. Decompose Sources
         comp_sources = map(eqn.model.sources) do src
             if src.field isa VectorField
@@ -67,17 +67,17 @@ function decompose(eqn::ModelEquation{VectorModel, M, E, S, P, ST}) where {M,E,S
                 return src
             end
         end
-        
+
         # 3. Re-bind Operators to the scalar component field
         # We must attach the mesh to phi_comp since VectorField components drop it
         phi_with_mesh = ScalarField(phi_comp.values, psi.mesh)
         comp_terms = Tuple(Operator(t.flux, phi_with_mesh, t.sign, t.type) for t in eqn.model.terms)
-        
+
         comp_model = Model{length(comp_terms), length(comp_sources)}(
             comp_terms,
             comp_sources
         )
-        
+
         comp_eqn = ModelEquation(
             ScalarModel(), comp_model, ScalarEquation(phi_with_mesh, comp_bcs),
             eqn.solver, eqn.preconditioner, eqn.setup

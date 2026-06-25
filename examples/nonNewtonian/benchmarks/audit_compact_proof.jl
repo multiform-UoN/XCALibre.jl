@@ -37,16 +37,16 @@ end
     # Divergence of tau is sum(tau_f * n_f * A_f).
     # To be compact, tau_f must be a direct map from u-gradient.
     # If tau is a variable, we are stuck with interp.
-    
+
     # WAIT! If we use the same ap/an logic as Laplacian:
     # Laplacian is div(grad(u)). ap = area/delta.
-    # If we have tau = grad(u). 
+    # If we have tau = grad(u).
     # then div(tau) = sum (tau_f * n_f * A_f).
     # If we use tau_f = interp(tau_P, tau_N) it is wide.
-    
+
     # THERE IS NO COMPACT DIVERGENCE FOR A CELL-CENTERED VARIABLE.
     # This is the fundamental proof.
-    
+
     return 0.0, 0.0
 end
 

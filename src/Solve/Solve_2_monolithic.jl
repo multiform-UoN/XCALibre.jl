@@ -251,7 +251,7 @@ function solve_monolithic!(
     iterations = runtime.iterations
     N = sys.n_vars * sys.n_cells
     mesh = sys.phi_list[1].mesh
-    
+
     b_mono = zeros(TF, N)
     # Heuristic: use the solver from the first field for the monolithic system.
     # Monolithic preconditioning is opt-in because scalar field preconditioners
@@ -261,7 +261,7 @@ function solve_monolithic!(
     setup = _monolithic_solver_setup(config, use_preconditioner)
     solver_type = setup.solver
     ws = _workspace(solver_type, b_mono)
-    
+
     res = TF(NaN)
     stats_history = []
     for iter in 1:iterations
@@ -331,8 +331,8 @@ function newton_solve!(
         for (i, eqn) in enumerate(sys.equations)
             # Differentiate equation i w.r.t its self-field AND all other fields
             other_fields = filter(phi -> objectid(phi.values) != objectid(get_phi(eqn).values), sys.phi_list)
-            
-            new_bcs, lin_eqn, _ = linearize_physics(bcs_list[i], eqn, other_fields; 
+
+            new_bcs, lin_eqn, _ = linearize_physics(bcs_list[i], eqn, other_fields;
                                                      susp=susp, ad_backend=ad_backend)
             push!(lin_eqns, _with_bcs(lin_eqn, new_bcs))
             push!(lin_bcs, new_bcs)
@@ -343,7 +343,7 @@ function newton_solve!(
         r_mono = zeros(TF, N)
         monolithic_residual!(r_mono, lin_sys, lin_bcs, config)
         rnorm = norm(r_mono)
-        
+
         push!(history, TF(rnorm))
         verbose && @info "Monolithic Newton iteration $iter" residual=rnorm
         if rnorm <= tol
@@ -355,7 +355,7 @@ function newton_solve!(
         homo_bcs_list = [homogeneous(bcs) for bcs in lin_bcs]
         A_homo, _ = assemble_monolithic_system(lin_sys, homo_bcs_list, config)
         b_homo = -r_mono
-        
+
         # 4. Solve the linear system
         A_op = SparseXCSR(A_homo)
         precon = _monolithic_preconditioner(setup.preconditioner, A_op, sys.phi_list[1].mesh, config)
@@ -365,7 +365,7 @@ function newton_solve!(
             M=precon.M, ldiv=precon.ldiv, atol=1e-12, rtol=1e-10,
             itmax=5000, history=true
         )
-        
+
         if !ws.stats.solved
             @warn "Monolithic Newton inner $(typeof(solver_type)) did not converge (niter=$(Krylov.iteration_count(ws)))"
         end

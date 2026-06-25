@@ -7,7 +7,7 @@ using Statistics
 # ==============================================================================
 # TUTORIAL: Pore-Scale Homogenisation in XCALibre.jl
 # ==============================================================================
-# This tutorial demonstrates how to calculate the permeability tensor of a 
+# This tutorial demonstrates how to calculate the permeability tensor of a
 # porous medium (a single sphere in a unit cell) using XCALibre.
 #
 # Methodology:
@@ -17,7 +17,7 @@ using Statistics
 # 4. Calculate the volume-averaged velocity to obtain the Permeability Tensor K.
 #
 # Comparison with OpenFOAM:
-# This script uses the exact same mesh and boundary conditions as the 
+# This script uses the exact same mesh and boundary conditions as the
 # OpenFOAM 'singleSphere' tutorial, allowing for direct performance comparison.
 # ==============================================================================
 
@@ -87,9 +87,9 @@ function build_3d_unit_cell(L, R, h)
 end
 
 @info "Generating Pore-Scale Mesh (Single Sphere) with Gmsh..."
-const L         = 1.0    
-const R         = 0.5    
-const mesh_size = 0.4    
+const L         = 1.0
+const R         = 0.5
+const mesh_size = 0.4
 mesh = build_3d_unit_cell(L, R, mesh_size)
 
 # Hardware selection (CPU with multithreading)
@@ -143,14 +143,14 @@ function solve_stokes_direction(direction_vector, mesh_dev, BCs, solvers, scheme
     rDf = FaceScalarField(mesh_dev); initialise!(rDf, 1.0)
     nueff = FaceScalarField(mesh_dev); initialise!(nueff, 1.0) # nu = 1.0
     divHv = ScalarField(mesh_dev)
-    
+
     # Apply macroscopic gradient as an implicit source in momentum
     macro_grad = VectorField(mesh_dev); initialise!(macro_grad, direction_vector)
 
     L_U = ((
           Time{schemes.U.time}()
-        - Laplacian{schemes.U.laplacian}(nueff) 
-        == 
+        - Laplacian{schemes.U.laplacian}(nueff)
+        ==
         - Source(∇p.result) + Source(macro_grad)
     ) → BCs.U) → solvers.U
 
@@ -172,7 +172,7 @@ function solve_stokes_direction(direction_vector, mesh_dev, BCs, solvers, scheme
 
     for iter in 1:config.runtime.iterations
         rx, ry, rz = solve_equation!(U_eqn, config)
-        
+
         inverse_diagonal!(rD, U_eqn, config)
         interpolate!(rDf, rD, config)
         remove_pressure_source!(U_eqn, ∇p, config)
@@ -180,9 +180,9 @@ function solve_stokes_direction(direction_vector, mesh_dev, BCs, solvers, scheme
         interpolate!(Uf, Hv, config)
         flux!(mdotf, Uf, config)
         XCALibre.div!(divHv, mdotf, config)
-        
+
         rp = solve_equation!(p_eqn, config; ref=0.0)
-        grad!(∇p, pf, p, BCs.p, 0.0, config) 
+        grad!(∇p, pf, p, BCs.p, 0.0, config)
         XCALibre.Solvers.correct_mass_flux!(mdotf, p_eqn, config)
         correct_velocity!(U, Hv, ∇p, rD, config)
 
@@ -191,7 +191,7 @@ function solve_stokes_direction(direction_vector, mesh_dev, BCs, solvers, scheme
             break
         end
     end
-    
+
     # Volume average velocity for permeability
     return volume_average(U)
 end

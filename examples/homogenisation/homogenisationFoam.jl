@@ -27,9 +27,9 @@ function stokes_upscaling!(model, config, J_macro; output=VTK(), pref=0.0)
 
     U_eqn = (
         Time{schemes.U.time}(U)
-        + Divergence{schemes.U.divergence}(mdotf, U) 
-        - Laplacian{schemes.U.laplacian}(nueff, U) 
-        == 
+        + Divergence{schemes.U.divergence}(mdotf, U)
+        - Laplacian{schemes.U.laplacian}(nueff, U)
+        ==
         - Source(∇p.result) + Source(macro_grad)
     ) → VectorEquation(U, boundaries.U)
 
@@ -47,17 +47,17 @@ function stokes_upscaling!(model, config, J_macro; output=VTK(), pref=0.0)
     (; nu) = model.fluid
     (; iterations) = runtime
     n_cells = length(mesh.cells)
-    
+
     gradU = Grad{schemes.U.gradient}(U)
     gradUT = T(gradU)
     S = StrainRate(gradU, gradUT, U, Uf)
 
     Hv = VectorField(mesh)
     rD = ScalarField(mesh)
-    prev = KernelAbstractions.zeros(backend, _get_float(mesh), n_cells) 
+    prev = KernelAbstractions.zeros(backend, _get_float(mesh), n_cells)
 
     time = 0.0
-    interpolate!(Uf, U, config)   
+    interpolate!(Uf, U, config)
     XCALibre.correct_boundaries!(Uf, U, boundaries.U, time, config)
     flux!(mdotf, Uf, config)
     grad!(∇p, pf, p, boundaries.p, time, config)
@@ -68,24 +68,24 @@ function stokes_upscaling!(model, config, J_macro; output=VTK(), pref=0.0)
     @info "Starting SIMPLE loops for Stokes Cell Problem..."
     for iter ∈ 1:iterations
         rx, ry, rz = solve_equation!(U_eqn, U, boundaries.U, solvers.U, xdir, ydir, zdir, config)
-        
+
         inverse_diagonal!(rD, U_eqn, config)
         interpolate!(rDf, rD, config)
         remove_pressure_source!(U_eqn, ∇p, config)
         H!(Hv, U, U_eqn, config)
-        
+
         interpolate!(Uf, Hv, config)
         XCALibre.correct_boundaries!(Uf, Hv, boundaries.U, time, config)
 
         flux!(mdotf, Uf, config)
         XCALibre.div!(divHv, mdotf, config)
-        
+
         prev .= p.values
         rp = solve_equation!(p_eqn, p, boundaries.p, solvers.p, config; ref=pref)
         explicit_relaxation!(p, prev, solvers.p.relax, config)
-        
-        grad!(∇p, pf, p, boundaries.p, time, config) 
-        
+
+        grad!(∇p, pf, p, boundaries.p, time, config)
+
         XCALibre.Solvers.correct_mass_flux!(mdotf, p_eqn, config)
         correct_velocity!(U, Hv, ∇p, rD, config)
 
@@ -99,7 +99,7 @@ function stokes_upscaling!(model, config, J_macro; output=VTK(), pref=0.0)
             @printf("Iter %d: Ux Res = %.2e, p Res = %.2e\n", iter, rx, rp)
         end
     end
-    
+
     return mdotf
 end
 
@@ -168,8 +168,8 @@ solvers = (
 )
 
 config = Configuration(
-    solvers=solvers, schemes=schemes, 
-    runtime=Runtime(iterations=2000, write_interval=-1, time_step=1.0), 
+    solvers=solvers, schemes=schemes,
+    runtime=Runtime(iterations=2000, write_interval=-1, time_step=1.0),
     hardware=hardware, boundaries=BCs
 )
 
@@ -222,22 +222,22 @@ for p_iter in 1:power_iters
 
     # Solve linear system for new psi
     res_psi = solve_equation!(psi_eqn, psi, BCs.psi, solvers.psi, config)
-    
+
     # Rayleigh-like quotient for lambda
     psi_c = Array(psi.values)
     psi_old_c = Array(psi_old.values)
-    
+
     num = sum(psi_old_c .* psi_c .* vols)
     den = sum(psi_c .* psi_c .* vols)
     lambda_new = lambda * (num / den)
-    
+
     err = abs(lambda_new - lambda) / abs(lambda)
     lambda = lambda_new
-    
+
     if p_iter % 5 == 0
         @printf("Power Iter %d: lambda = %.5e (err = %.2e, solver_res = %.2e)\n", p_iter, lambda, err, res_psi)
     end
-    
+
     if err < 1e-5
         @printf("Power Iterations converged! Final lambda = %.5e\n", lambda)
         break

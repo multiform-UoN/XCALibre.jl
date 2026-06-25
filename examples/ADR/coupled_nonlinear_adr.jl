@@ -112,7 +112,7 @@ for outer in 1:n_outer
     # Using a closure to capture the current state of C2
     C2_vals = Array(C2.values) # Cache for derivative calculation
     f1(c1_val, cell_idx) = k_rate * c1_val * C2_vals[cell_idx]
-    
+
     # Redefine equation for C1 with current C2
     # We use a wrapper that allows linearize_physics to work with per-cell closures
     # For now, let's simplify and use the NonLinearSi with the captured C2 values.

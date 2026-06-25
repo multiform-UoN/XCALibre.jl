@@ -14,12 +14,12 @@ function create_l_bend_mesh(nx, ny; scale=1.0)
         [2.0, 2.0, 0.0], [1.0, 2.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]
     ] .* scale
 
-    # For now, since XCALibre expects .unv, I'll try to use existing grids or 
+    # For now, since XCALibre expects .unv, I'll try to use existing grids or
     # just create a simple rectangular channel if L-bend generation is too complex here.
     # Actually, I can use quad40.unv (40x40) as a proxy for the simple channel.
     # For L-bend, I'll skip it if I can't generate it easily, but I'll try.
-    
-    # Actually, XCALibre's UNV2D_mesh is the main way. 
+
+    # Actually, XCALibre's UNV2D_mesh is the main way.
     # I'll create a script to run the simple channel first.
 end
 
@@ -29,6 +29,6 @@ const MESH_QUAD40 = joinpath(pkgdir(XCALibre, "examples", "0_GRIDS"), "quad40.un
 function run_benchmark(model_name, mesh_path, is_compressible, is_periodic)
     @info "Running Benchmark: $model_name, Comp=$is_compressible, Periodic=$is_periodic"
     # Load script and modify parameters/BCs
-    # (Implementation details omitted for brevity in this thought, 
+    # (Implementation details omitted for brevity in this thought,
     # but I'll generate the scripts below)
 end

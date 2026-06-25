@@ -20,7 +20,7 @@ hardware = Hardware(backend=backend, workgroup=workgroup)
 mesh_dev = adapt(backend, mesh)
 
 # 2. Define Analytical Flow Field
-analytical_U(x, y, z) = [1.0, 0.0, 0.0] 
+analytical_U(x, y, z) = [1.0, 0.0, 0.0]
 model = Physics(time=Steady(), energy=Energy{Isothermal}(), domain=mesh_dev)
 initialise!(model.momentum.U, analytical_U)
 
@@ -71,24 +71,24 @@ ad_backend = :forwarddiff
 total_time = 0.0
 for i in 1:20
     global total_time
-    
+
     # Timing start
     iter_start = time_ns()
-    
+
     # 6.1 Newton Linearization
     updated_bcs, C_eqn = linearize_physics(BCs, C_eqn_template; ad_backend=ad_backend)
-    
+
     # 6.2 Linear Solve
     res = solve_equation!(C_eqn, C, updated_bcs.C, solvers.C, config)
-    
+
     # Timing end
     iter_end = time_ns()
     iter_time = (iter_end - iter_start) / 1e9
     total_time += iter_time
-    
-    @printf("Iteration %d: Res = %.2e, Mean C = %.4f, Time = %.4fs\n", 
+
+    @printf("Iteration %d: Res = %.2e, Mean C = %.4f, Time = %.4fs\n",
             i, res, mean(C.values), iter_time)
-            
+
     if res < solvers.C.convergence
         @info "Converged at iter $i"
         break

@@ -1,11 +1,11 @@
 # ==============================================================================
 # 2D Periodic Homogenisation — Square Unit Cell with Circular Inclusion
 # ==============================================================================
-# This example solves the Stokes cell problems required to compute the 
+# This example solves the Stokes cell problems required to compute the
 # effective permeability tensor K of a periodic microstructure.
 #
 # MATHEMATICAL BACKGROUND:
-# For a periodic porous medium, the macro-scale Darcy law is derived by 
+# For a periodic porous medium, the macro-scale Darcy law is derived by
 # solving "cell problems" on a representative unit cell Y.
 #
 # Solves Stokes cell problems (μ = 1) for each coordinate direction e_j:

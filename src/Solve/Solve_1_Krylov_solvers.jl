@@ -23,12 +23,12 @@ using LinearAlgebra: I
 Generic wrapper for Krylov.jl solve! methods.
 """
 function krylov_solve!(
-    solver, A, b, x=nothing; 
+    solver, A, b, x=nothing;
     M=I, itmax=1000, atol=1e-12, rtol=1e-10, ldiv=false, history=false
 )
     # Unwrap SparseXCSR if needed
     real_A = A isa SparseXCSR ? parent(A) : A
-    
+
     # Map workspace to method
     if typeof(solver) <: Krylov.CgWorkspace
         if x !== nothing

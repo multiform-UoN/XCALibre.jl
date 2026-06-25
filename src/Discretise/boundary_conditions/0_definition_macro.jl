@@ -18,7 +18,7 @@ Macro to reduce boilerplate code when defining boundary conditions (implemented 
 
 # Available fields
 
-- `term` reference to operator on which the boundary applies (gives access to the field and mesh) 
+- `term` reference to operator on which the boundary applies (gives access to the field and mesh)
 - `cellID` ID of the corresponding boundary cell
 - `zcellID` sparse matrix linear index for the cell
 - `cell` gives access to boundary cell object and corresponding information
@@ -80,7 +80,7 @@ end
 # Specific macro for Biharmonic (higher-order) to avoid ambiguity
 macro define_boundary_biharmonic(boundary, definition)
     quote
-        @inline (bc::$boundary)(term::Operator{F,P,I,Biharmonic{Linear}}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P,I} = 
+        @inline (bc::$boundary)(term::Operator{F,P,I,Biharmonic{Linear}}, colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time) where {F,P,I} =
         @inbounds begin
             $definition
         end

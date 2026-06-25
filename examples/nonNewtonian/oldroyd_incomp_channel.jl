@@ -3,7 +3,7 @@
 # =============================================================================
 #
 # This example mimics the 'GMRT_OldroydB_incompFoam' OpenFOAM benchmark.
-# It solves the standard mixed-form Stokes equations coupled to an 
+# It solves the standard mixed-form Stokes equations coupled to an
 # Oldroyd-B viscoelastic constitutive law.
 #
 # Geometry: 2D Straight Channel (quad40.unv, 40x40 mesh, 1m x 1m)
@@ -27,7 +27,7 @@ mesh_dev  = adapt(backend, mesh)
 lambda_p = length(ARGS) >= 1 ? parse(Float64, ARGS[1]) : 1.0
 dt       = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.01
 n_iter   = length(ARGS) >= 3 ? parse(Int, ARGS[3]) : 10
-mu_s_val    = 1.0; mu_p_val = 1.0; 
+mu_s_val    = 1.0; mu_p_val = 1.0;
 force_x     = 1.0; tau_rc_val = 0.1
 
 @info "Incomp Oldroyd-B Benchmark: mu_s=$mu_s_val, mu_p=$mu_p_val, lambda_p=$lambda_p"

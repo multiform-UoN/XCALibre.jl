@@ -22,7 +22,7 @@
 ## What is XCALibre.jl?
 
 
-XCALibre.jl (pronounced as the mythical sword *Excalibur*) is a general purpose Computational Fluid Dynamics (CFD) library for 2D and 3D simulations on structured/unstructured grids using the finite volume method. XCALibre.jl has been designed to act as a platform for developing, testing and using *XPU CFD Algorithms and Libraries* to give researchers in both academia and industry alike a tool that can be used to test out ideas easily within a framework that offers acceptable performance. To this end, XCALibre.jl has been implemented to offer both CPU multi-threaded capabilities or GPU acceleration using the same codebase (thanks to the unified programming framework provided by [KernelAbstractions.jl](https://juliagpu.github.io/KernelAbstractions.jl/stable/)). XCALibre.jl also offers a friendly API for those users who are interested in running CFD simulations with the existing solvers and models built into XCALibre.jl. 
+XCALibre.jl (pronounced as the mythical sword *Excalibur*) is a general purpose Computational Fluid Dynamics (CFD) library for 2D and 3D simulations on structured/unstructured grids using the finite volume method. XCALibre.jl has been designed to act as a platform for developing, testing and using *XPU CFD Algorithms and Libraries* to give researchers in both academia and industry alike a tool that can be used to test out ideas easily within a framework that offers acceptable performance. To this end, XCALibre.jl has been implemented to offer both CPU multi-threaded capabilities or GPU acceleration using the same codebase (thanks to the unified programming framework provided by [KernelAbstractions.jl](https://juliagpu.github.io/KernelAbstractions.jl/stable/)). XCALibre.jl also offers a friendly API for those users who are interested in running CFD simulations with the existing solvers and models built into XCALibre.jl.
 
 #### Large Eddy Simulation
 ![](docs/src/figures/animated_cylinder_re1000-2x.gif)
@@ -34,7 +34,7 @@ XCALibre.jl (pronounced as the mythical sword *Excalibur*) is a general purpose 
 ## Installation
 
 
-First, you need to [download and install Julia on your system](https://julialang.org/downloads/). Once you have a working installation of Julia, XCALibre.jl can be installed using the built-in package manager. 
+First, you need to [download and install Julia on your system](https://julialang.org/downloads/). Once you have a working installation of Julia, XCALibre.jl can be installed using the built-in package manager.
 
 XCALibre.jl is available directly from the the General Julia Registry. Thus, to install XCALibre.jl open a Julia REPL, press `]` to enter the package manager. The REPL prompt icon will change from **julia>** (green) to **pkg>** (and change colour to blue) or **(myenvironment) pkg>** where `myenvironment` is the name of the currently active Julia environment. Once you have activated the package manager mode enter
 
@@ -74,9 +74,9 @@ Code example
 ```julia
 L_U = ((
           Time{schemes.U.time}()
-        + Divergence{schemes.U.divergence}(mdotf) 
-        - Laplacian{schemes.U.laplacian}(nueff) 
-        == 
+        + Divergence{schemes.U.divergence}(mdotf)
+        - Laplacian{schemes.U.laplacian}(nueff)
+        ==
         Source(-∇p.result)
       ) → BCs.U) → solvers.U
 
@@ -100,8 +100,8 @@ XCALibre.jl relies on the functionality provided by other packages from the Juli
 
 There are other wonderful fluid simulation packages available in the Julia ecosystem (please let us know if we missed any):
 
-* [Oceananigans.jl](https://github.com/CliMA/Oceananigans.jl) 
-* [Waterlilly.jl](https://github.com/WaterLily-jl/WaterLily.jl) 
+* [Oceananigans.jl](https://github.com/CliMA/Oceananigans.jl)
+* [Waterlilly.jl](https://github.com/WaterLily-jl/WaterLily.jl)
 * [Trixi.jl](https://github.com/trixi-framework/Trixi.jl)
 
 ## How to Cite
@@ -109,20 +109,20 @@ There are other wonderful fluid simulation packages available in the Julia ecosy
 If you have used XCALibre.jl in your work, please cite it using the reference below:
 
 ```
-@article{Medina2025, 
-  author = {Humberto Medina and Christopher D. Ellis and Tom Mazin and Oscar Osborn and Timothy Ward and Stephen Ambrose and Svetlana Aleksandrova and Benjamin Rothwell and Carol Eastwick}, 
-  title = {XCALibre.jl: A Julia XPU unstructured finite volume Computational Fluid Dynamics library}, 
+@article{Medina2025,
+  author = {Humberto Medina and Christopher D. Ellis and Tom Mazin and Oscar Osborn and Timothy Ward and Stephen Ambrose and Svetlana Aleksandrova and Benjamin Rothwell and Carol Eastwick},
+  title = {XCALibre.jl: A Julia XPU unstructured finite volume Computational Fluid Dynamics library},
   journal = {Journal of Open Source Software},
-  publisher = {The Open Journal}, 
-  volume = {10}, 
-  number = {107}, 
-  pages = {7441}, 
-  year = {2025}, 
-  doi = {10.21105/joss.07441}, 
+  publisher = {The Open Journal},
+  volume = {10},
+  number = {107},
+  pages = {7441},
+  year = {2025},
+  doi = {10.21105/joss.07441},
   url = {https://doi.org/10.21105/joss.07441}
 }
 ```
-  
+
 
 ## multiform-UoN Fork New Features
 

@@ -2,14 +2,14 @@
 
 # XCALibre Stress-Operator Audit (Defect Correction)
 #
-# Verifies that a stress-coupled formulation with implicit Laplacian 
+# Verifies that a stress-coupled formulation with implicit Laplacian
 # stabilization recovers the direct Laplacian solution.
 #
-# Goal: 
+# Goal:
 #   -mu Δu - div(τ - 2 mu ε(u)) + ∇p = f
 #   τ = 2 mu ε(u)
 #
-# This is algebraically identical to Newtonian Stokes, but tests the 
+# This is algebraically identical to Newtonian Stokes, but tests the
 # stabilizing effect of the implicit Laplacian backbone.
 
 include("benchmark_utils.jl")
@@ -96,7 +96,7 @@ function solve_stress_defect(mesh_dev, mu_val, f_u)
     )
 
     config = Configuration(solvers=solvers, schemes=(u=Schemes(), v=Schemes(), p=Schemes(), txx=Schemes(), tyy=Schemes(), txy=Schemes()), runtime=Runtime(iterations=1, write_interval=-1, time_step=1.0), hardware=Hardware(backend=CPU(), workgroup=1024), boundaries=BCs)
-    
+
     mu = ConstantScalar(mu_val)
     two_mu = ConstantScalar(2.0*mu_val)
     one = ConstantScalar(1.0)
@@ -104,42 +104,42 @@ function solve_stress_defect(mesh_dev, mu_val, f_u)
 
     # Momentum with defect correction:
     # -mu Laplacian(u) - div(tau) + div(2 mu ε(u)) + grad(p) = f
-    # For now, let's just do -mu Laplacian(u) - div(tau) + grad(p) = f 
+    # For now, let's just do -mu Laplacian(u) - div(tau) + grad(p) = f
     # BUT! tau should be defined as "extra stress" only.
     # If tau = 2 mu ε(u), then -div(tau) + div(2 mu ε(u)) = 0.
-    
+
     # Let's try the simplest defect form:
     # -mu Laplacian(u) + grad(p) = f + (div(tau) - div(2 mu ε(u)))  (lagged)
     # But we want a MONOLITHIC solution.
-    
-    # In a monolithic system, we can't easily lag terms. 
+
+    # In a monolithic system, we can't easily lag terms.
     # We want -mu Laplacian(u) - div(tau) + grad(p) = f
     # with tau = 0? No.
-    
+
     # Actually, the user's challenge is to match:
     # tau = 2 mu ε(u)
     # -div(tau) + grad(p) = f
     # to
     # -mu Laplacian(u) + grad(p) = f
-    
+
     # We found that -div(tau) checkerboards.
     # If we add -mu Laplacian(u) + mu Laplacian(u) to momentum:
     # -mu Laplacian(u) + grad(p) = f + (div(tau) - mu Laplacian(u))
     # where mu Laplacian(u) is the compact one.
-    
+
     L_u = ((-Laplacian{XCALibre.Linear}(mu) - ScalarGrad{XCALibre.Linear,1}(one, txx) - ScalarGrad{XCALibre.Linear,2}(one, txy) + ScalarGrad{XCALibre.Linear,1}(one, p) == Source(f_u)) → BCs.u) → solvers.u
     L_v = ((-Laplacian{XCALibre.Linear}(mu) - ScalarGrad{XCALibre.Linear,1}(one, txy) - ScalarGrad{XCALibre.Linear,2}(one, tyy) + ScalarGrad{XCALibre.Linear,2}(one, p) == Source(0.0)) → BCs.v) → solvers.v
     L_p = ((-Laplacian{XCALibre.Linear}(tau_rc) + VectorDiv{XCALibre.Linear,1}(one, u) + VectorDiv{XCALibre.Linear,2}(one, v) == Source(0.0)) → BCs.p) → solvers.p
-    
+
     # tau is defined as a perturbation/correction? No.
     # If we solve for tau and u together, we MUST have a stable coupling.
-    
+
     # What if we use a COMPACT Divergence?
     # XCALibre doesn't have one.
-    
+
     # Let's try to set mu_s = mu and see if rel_diff is small.
     # (Already did, it is not 0 because div(tau) is still there).
-    
+
     println("This audit requires a stabilized stress-divergence operator.")
     return nothing
 end

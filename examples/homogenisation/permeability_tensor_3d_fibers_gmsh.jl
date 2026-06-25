@@ -1,22 +1,22 @@
 # ==============================================================================
 # 3D Periodic Homogenisation — Random-Fiber Microstructure
 # ==============================================================================
-# This example computes the 3x3 permeability tensor K for a complex 3D 
+# This example computes the 3x3 permeability tensor K for a complex 3D
 # geometry consisting of random cylinders (fibers).
 #
 # GEOMETRY CONSTRUCTION (CSG):
-# To ensure the microstructure is truly periodic, the fibers must "wrap around" 
+# To ensure the microstructure is truly periodic, the fibers must "wrap around"
 # the unit cell boundaries. The following steps are performed via Gmsh OCC:
 #   1. Generate N "master" fibers with random positions and orientations.
 #   2. Create a 3x3x3 grid of periodic image copies (shifts of ±2L).
 #   3. Intersect all these cylinders with the unit cell box [-L, L]³.
 #   4. Subtract the resulting periodic fiber fragments from the box.
-# This ensures that a fiber exiting the "right" face perfectly re-enters 
+# This ensures that a fiber exiting the "right" face perfectly re-enters
 # the "left" face.
 #
 # NUMERICAL METHOD:
 # - Solves 3 independent Stokes cell problems (forcing in X, Y, and Z).
-# - Uses `pair_periodic_surfaces` to match the fragmented surface patches 
+# - Uses `pair_periodic_surfaces` to match the fragmented surface patches
 #   created by fiber–wall intersections.
 # - Uses the `PDEOperator` paradigm to handle the complex 3D momentum equations.
 #

@@ -1,6 +1,6 @@
 export AbstractOperator, AbstractSource, AbstractEquation
 export Operator, OperatorTemplate, PDEOperator, ScaledFlux, Source, Src
-export Time, Laplacian, Divergence, Si, CoupledSi, NonLinearSi
+export Time, TimeTerm, Laplacian, Divergence, Si, CoupledSi, NonLinearSi
 export NonlinearMap, NonlinearOperator, NonlinearOperatorTemplate, AffineOperator
 export Biharmonic, _get_flux
 export GradDiv
@@ -75,6 +75,10 @@ struct Time{T} end
 function Adapt.adapt_structure(to, itp::Time{T}) where {T}
     Time{T}()
 end
+
+# Alias used by the operator-template API to make the role of a temporal term
+# explicit while preserving the existing fused Time{T} dispatch surface.
+const TimeTerm = Time
 
 struct Laplacian{T} end
 function Adapt.adapt_structure(to, itp::Laplacian{T}) where {T}
@@ -259,8 +263,8 @@ VectorDiv{T,J}(flux, phi) where {T,J} = Operator(flux, phi, 1, VectorDiv{T,J}())
 
 # Base Source
 struct Src{F,S} <: AbstractSource
-    field::F 
-    sign::S 
+    field::F
+    sign::S
     # type::T
 end
 Adapt.@adapt_structure Src
@@ -327,14 +331,14 @@ ScalarEquation(phi::ScalarField, BCs; extended=false) = begin
     mesh = phi.mesh
     nCells = length(mesh.cells)
     Tf = _get_float(mesh)
-    mesh_temp = adapt(CPU(), mesh) # WARNING: Temp solution 
-    
+    mesh_temp = adapt(CPU(), mesh) # WARNING: Temp solution
+
     if extended
         i, j, v = extended_sparse_matrix_connectivity(mesh_temp)
     else
         i, j, v = sparse_matrix_connectivity(mesh_temp)
     end
-    
+
     i, j = extend_matrix(mesh, BCs, i, j)
     v = zeros(Tf, length(j))
     backend = _get_backend(mesh)
@@ -368,16 +372,16 @@ VectorEquation(psi::VectorField, BCs) = begin
     mesh = psi.mesh
     nCells = length(mesh.cells)
     Tf = _get_float(mesh)
-    mesh_temp = adapt(CPU(), mesh) # WARNING: Temp solution 
+    mesh_temp = adapt(CPU(), mesh) # WARNING: Temp solution
     i, j, v = sparse_matrix_connectivity(mesh_temp) # This needs to be a kernel
     i, j = extend_matrix(mesh, BCs, i, j)
     # i = [i; periodicConnectivity.i]
     # j = [j; periodicConnectivity.j]
     v = zeros(Tf, length(j))
     backend = _get_backend(mesh)
-    # A = _convert_array!(sparse(i, j, v), backend) 
+    # A = _convert_array!(sparse(i, j, v), backend)
     # A0 = _convert_array!(sparse(i, j, v), backend)
-    # A = _convert_array!(sparsecsr(i, j, v), backend) 
+    # A = _convert_array!(sparsecsr(i, j, v), backend)
     # A0 = _convert_array!(sparsecsr(i, j, v), backend)
 
     A = _build_A(backend, i, j, v, nCells)
@@ -419,7 +423,7 @@ function sparse_matrix_connectivity(mesh::AbstractMesh)
     TF = _get_float(mesh)
     i = TI[]
     j = TI[]
-    for cID = 1:nCells   
+    for cID = 1:nCells
         cell = cells[cID]
         push!(i, cID) # diagonal row index
         push!(j, cID) # diagonal column index

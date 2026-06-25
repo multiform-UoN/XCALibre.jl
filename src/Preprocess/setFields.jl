@@ -93,6 +93,7 @@ end
 Assigns `value_true` to every cell whose centre `(x, y, z)` satisfies `condition(x, y, z)`.
 If `value_false` is provided all other cells receive `value_false`; otherwise they are unchanged.
 Runs on the same backend as `field` (CPU or GPU).
+For GPU backends, `condition` must be callable from a device kernel.
 
 Returns the number of cells where `condition` returned `true`.
 

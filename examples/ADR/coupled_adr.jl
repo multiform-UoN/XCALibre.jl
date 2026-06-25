@@ -121,10 +121,10 @@ for i in 1:runtime.iterations
     # Update coupling terms
     S_imp1.values .= k_rate .* C2.values
     S_imp2.values .= k_rate .* C1.values
-    
+
     res1 = solve_equation!(C1_eqn, C1, BCs.C1, solvers.C, config)
     res2 = solve_equation!(C2_eqn, C2, BCs.C2, solvers.C, config)
-    
+
     if i % 10 == 0
         println("Iteration $i, C1 Res: $res1, C2 Res: $res2")
     end

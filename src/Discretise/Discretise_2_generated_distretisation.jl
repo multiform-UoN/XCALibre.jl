@@ -23,7 +23,7 @@ function discretise!(
     # reset storage of sparse matrix
     z = zero(eltype(nzval))
     xcal_foreach(nzval, config) do i
-        nzval0[i] = z 
+        nzval0[i] = z
     end
 
 
@@ -60,7 +60,7 @@ end
             face = faces[fID]
             nID = cell_neighbours[fi]
             cellN = cells[nID]
-            
+
             # Set index for sparse array values at workitem cell neighbour index
             nIndex = spindex(rowptr, colval, i, nID)
 
@@ -72,17 +72,17 @@ end
 
         end
 
-        
+
         # Call scheme source generated function NEEDS UPDATING!
         ac, bx1, by1, bz1 = _scheme_source!(model, terms, cell, i, cIndex, prev, runtime, rho_prev)
-        
+
         nzval0[cIndex] = ac_sum + ac
 
         # Call sources generated function
         bx2, by2, bz2 = _sources!(model, sources, volume, i)
         bx[i] = bx1 + bx2
         by[i] = by1 + by2
-        bz[i] = bz1 + bz2 
+        bz[i] = bz1 + bz2
     end
 end
 
@@ -108,7 +108,7 @@ function discretise!(
     # reset storage of sparse matrix
     z = zero(eltype(nzval))
     xcal_foreach(nzval, config) do i
-        nzval[i] = z 
+        nzval[i] = z
     end
 
 
@@ -147,7 +147,7 @@ end
             face = faces[fID]
             nID = cell_neighbours[fi]
             cellN = cells[nID]
-            
+
             # Set index for sparse array values at workitem cell neighbour index
             nIndex = spindex(rowptr, colval, i, nID)
 
@@ -157,7 +157,7 @@ end
             nzval[nIndex] = an
             b[i] += bface
         end
-        
+
         # Call scheme source generated function
         ac, b1 = _scheme_source!(model, terms, cell, i, cIndex, prev, runtime, rho_prev)
         nzval[cIndex] = ac_sum + ac
@@ -337,7 +337,7 @@ function update_equation!(eqn::ModelEquation{T,M,E,S,P}, config) where {T<:Vecto
     # # KernelAbstractions.synchronize(backend)
 end
 
-@kernel function _update_equation!(nzval, nzval0) 
+@kernel function _update_equation!(nzval, nzval0)
     i = @index(Global)
 
     @inbounds begin
@@ -359,7 +359,7 @@ function assemble_matrix!(eqn::ModelEquation{T,M,E,S,P}, config) where {T<:Scala
     rowptr = _rowptr(A)
     z = zero(eltype(nzval))
     xcal_foreach(nzval, config) do i
-        nzval[i] = z 
+        nzval[i] = z
     end
     ndrange = length(mesh.cells)
     kernel! = _assemble_matrix_scalar_model!(_setup(backend, workgroup, ndrange)...)
@@ -402,7 +402,7 @@ function assemble_matrix!(eqn::ModelEquation{T,M,E,S,P}, config) where {T<:Vecto
     rowptr = _rowptr(A)
     z = zero(eltype(nzval))
     xcal_foreach(nzval, config) do i
-        nzval0[i] = z 
+        nzval0[i] = z
     end
     ndrange = length(mesh.cells)
     kernel! = _assemble_matrix_vector_model!(_setup(backend, workgroup, ndrange)...)
@@ -526,4 +526,3 @@ end
         r[i] = (ac_sum + ac) * prev[i] + an_phi_sum - (b_sum + b1 + b2)
     end
 end
-

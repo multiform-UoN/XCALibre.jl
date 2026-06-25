@@ -72,8 +72,8 @@ macro_grad = VectorField(mesh_dev); initialise!(macro_grad, [1.0, 0.0, 0.0])
     # Use the new PDEOperator DSL for abstract definitions
     L_U = ((
           Time{SteadyState}()
-        - Laplacian{schemes.U.laplacian}(nueff) 
-        == 
+        - Laplacian{schemes.U.laplacian}(nueff)
+        ==
         - Source(∇p.result) + Source(macro_grad)
     ) → BCs.U) → solvers.U
 
@@ -99,7 +99,7 @@ macro_grad = VectorField(mesh_dev); initialise!(macro_grad, [1.0, 0.0, 0.0])
     for iter in 1:10
         global total_time
         start = time_ns()
-        
+
         rx, ry, rz = solve_equation!(U_eqn, config)
         inverse_diagonal!(rD, U_eqn, config)
         interpolate!(rDf, rD, config)
@@ -112,7 +112,7 @@ macro_grad = VectorField(mesh_dev); initialise!(macro_grad, [1.0, 0.0, 0.0])
         prev_p .= p.values
         rp = solve_equation!(p_eqn, config; ref=0.0)
         # explicit_relaxation!(p, prev_p, solvers.p.relax, config)
-        grad!(∇p, pf, p, BCs.p, 0.0, config) 
+        grad!(∇p, pf, p, BCs.p, 0.0, config)
         XCALibre.Solvers.correct_mass_flux!(mdotf, p_eqn, config)
         correct_velocity!(U, Hv, ∇p, rD, config)
 

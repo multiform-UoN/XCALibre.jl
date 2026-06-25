@@ -12,7 +12,7 @@
 #
 # Geometry: 2D Straight Channel (quad40.unv, 40x40 mesh, 1m x 1m)
 # Parameters: mu = 1.0, f = (1.0, 0.0)
-# BCs: 
+# BCs:
 #   - Walls (top/bottom): u = (0,0) [No-slip]
 #   - Inlet/Outlet: zeroGradient (Neumann) for u and p.
 # =============================================================================

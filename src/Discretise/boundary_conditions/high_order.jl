@@ -12,7 +12,7 @@ end
 
 @define_boundary_biharmonic Robin begin
     J = term.flux[fID]
-    (; area, delta) = face 
+    (; area, delta) = face
     (; a, b, value) = bc.value
     denom = a*delta + b
     coeff = J*area/denom

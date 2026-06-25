@@ -33,7 +33,7 @@ alpha_drag = 10.0 # Strong quadratic drag
 # 4. Define Non-Linear Operator
 # We use NonLinearSi to define the quadratic drag |U|U.
 # For a vector field, we define the scalar mapping for each component.
-# Note: |U| is treated as a frozen coefficient in this simplified example, 
+# Note: |U| is treated as a frozen coefficient in this simplified example,
 # or we can use the full nonlinear form.
 
 # 5. Setup Configuration
@@ -47,10 +47,10 @@ BCs = assign(
 schemes = (U = Schemes(laplacian=Linear),)
 
 config = Configuration(
-    solvers=nothing, 
-    schemes=schemes, 
-    runtime=Runtime(iterations=10, time_step=1.0, write_interval=-1), 
-    hardware=hardware, 
+    solvers=nothing,
+    schemes=schemes,
+    runtime=Runtime(iterations=10, time_step=1.0, write_interval=-1),
+    hardware=hardware,
     boundaries=BCs
 )
 

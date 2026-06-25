@@ -51,12 +51,12 @@ function write_results(
             # nNodes = length(cell.nodesID)
             nNodes = length(cell.nodes_range)
             nodes = ""
-            # for nodeID ∈ cell.nodesID 
-            for ni ∈ cell.nodes_range 
+            # for nodeID ∈ cell.nodesID
+            for ni ∈ cell.nodes_range
                 nodeID = cell_nodes_cpu[ni]
                 node = "$(nodeID-1)"
                 nodes = nodes*" "*node
-            end 
+            end
             println(io, nNodes," ", nodes)
         end
 
@@ -80,10 +80,10 @@ function write_results(
         for arg ∈ args
             label = arg[1]
             field = arg[2]
-            
+
             # Skip if field is nothing (e.g. unallocated physics fields)
             isnothing(field) && continue
-            
+
             field_type = typeof(field)
             if field_type <: ScalarField
                 write(io, "SCALARS $(label) double 1\n")
@@ -114,7 +114,7 @@ function write_results(
                 """)
             end
         end
-        
+
         # write(io, "POINT_DATA $(nPoints)\n")
         # write(io, "SCALARS p double 1\n")
         # write(io, "LOOKUP_TABLE default\n")
@@ -132,7 +132,7 @@ end
 
 function copy_scalarfield_to_cpu(a, backend::KernelAbstractions.GPU)
     a_cpu = Array{eltype(a)}(undef, length(a))
-    
+
     copyto!(a_cpu, a)
     return a_cpu
 end
@@ -146,7 +146,7 @@ function copy_to_cpu(a, b, c, backend::KernelAbstractions.GPU)
     a_cpu = Array{eltype(a)}(undef, length(a))
     b_cpu = Array{eltype(b)}(undef, length(b))
     c_cpu = Array{eltype(c)}(undef, length(c))
-    
+
     copyto!(a_cpu, a)
     copyto!(b_cpu, b)
     copyto!(c_cpu, c)

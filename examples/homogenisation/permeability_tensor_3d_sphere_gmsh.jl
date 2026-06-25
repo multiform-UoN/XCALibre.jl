@@ -1,7 +1,7 @@
 # ==============================================================================
 # 3D Periodic Homogenisation — Cubic Unit Cell with Spherical Inclusion
 # ==============================================================================
-# This example solves the 3D Stokes cell problems required to compute the 
+# This example solves the 3D Stokes cell problems required to compute the
 # effective permeability tensor K for a cubic unit cell containing a sphere.
 #
 # MATHEMATICAL FORMULATION:
@@ -10,8 +10,8 @@
 # where e_j is a unit body force in direction j (x, y, or z).
 #
 # PERIODIC BOUNDARY CONDITIONS:
-# For the macroscopic Darcy law to be valid, the microscopic velocity w and 
-# pressure π must be periodic on the unit cell boundaries. 
+# For the macroscopic Darcy law to be valid, the microscopic velocity w and
+# pressure π must be periodic on the unit cell boundaries.
 #   w(x + 2L e_i) = w(x)
 #
 # GMSH MESH GENERATION:

@@ -27,7 +27,7 @@ solvers = (h = SolverSetup(solver=Bicgstab(), preconditioner=Jacobi(), convergen
 config = Configuration(solvers=solvers, schemes=schemes, runtime=Runtime(iterations=1, time_step=0.001, write_interval=-1), hardware=hardware, boundaries=BCs)
 
 h = ScalarField(mesh_dev); initialise!(h, 0.1)
-h.values .+= 0.01 .* rand(length(h.values)) 
+h.values .+= 0.01 .* rand(length(h.values))
 
 @info "Solving Darcy Thin-Film (h mobility)..."
 
@@ -48,7 +48,7 @@ for step in 1:10
     L = pde → BCs.h
     h_eqn = L(h)
 
-    # Initialise solver (can be done once outside if we use split assembly, 
+    # Initialise solver (can be done once outside if we use split assembly,
     # but here we follow standard solve)
     @reset h_eqn.setup = solvers.h
     @reset h_eqn.preconditioner = set_preconditioner(solvers.h.preconditioner, h_eqn)

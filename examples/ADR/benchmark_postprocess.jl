@@ -74,7 +74,7 @@ for i in 1:n_iter
     start_time = time_ns()
     res = solve_equation!(C_eqn, C, BCs.C, solvers.C, config)
     end_time = time_ns()
-    
+
     iter_time = (end_time - start_time) / 1e9
     total_time += iter_time
     @printf("Iteration %d: Res = %.2e, Time = %.4fs\n", i, res, iter_time)

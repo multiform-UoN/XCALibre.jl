@@ -8,9 +8,9 @@ end
 Adapt.@adapt_structure RobinValue
 
 struct Robin{I,V,R<:UnitRange} <: AbstractBoundary
-    ID::I 
+    ID::I
     value::V
-    IDs_range::R 
+    IDs_range::R
 end
 Adapt.@adapt_structure Robin
 
@@ -25,7 +25,7 @@ end
 
 @define_boundary Robin Laplacian{Linear} begin
     J = term.flux[fID]
-    (; area, delta) = face 
+    (; area, delta) = face
     (; a, b, value) = bc.value
     denom = a*delta + b
     coeff = J*area/denom
@@ -36,7 +36,7 @@ end
 
 @define_boundary Robin Divergence{Linear} begin
     flux = -term.flux[fID]
-    (; delta) = face 
+    (; delta) = face
     (; a, b, value) = bc.value
     denom = a*delta + b
     ap = term.sign*(flux)
@@ -45,7 +45,7 @@ end
 
 @define_boundary Robin Divergence{Upwind} begin
     flux = -term.flux[fID]
-    (; delta) = face 
+    (; delta) = face
     (; a, b, value) = bc.value
     denom = a*delta + b
     ap = term.sign*(flux)
@@ -54,7 +54,7 @@ end
 
 @define_boundary Robin Divergence{LUST} begin
     flux = -term.flux[fID]
-    (; delta) = face 
+    (; delta) = face
     (; a, b, value) = bc.value
     denom = a*delta + b
     ap = term.sign*(flux)
@@ -75,7 +75,7 @@ end
 
 @define_boundary Robin Divergence{BoundedUpwind} begin
     flux = -term.flux[fID]
-    (; delta) = face 
+    (; delta) = face
     (; a, b, value) = bc.value
     denom = a*delta + b
     ap = term.sign*(flux)

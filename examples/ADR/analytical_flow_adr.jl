@@ -23,7 +23,7 @@ mesh_dev = adapt(backend, mesh)
 # 2. Define Analytical Flow Field
 # instead of solving Navier-Stokes, we define U as a function of coordinates
 # Let's use a simple parabolic or linear profile for demonstration.
-analytical_U(x, y, z) = [1.0 * (1.0 - (y/0.1)^2), 0.0, 0.0] 
+analytical_U(x, y, z) = [1.0 * (1.0 - (y/0.1)^2), 0.0, 0.0]
 
 # Create a minimal model shell
 model = Physics(
@@ -81,9 +81,9 @@ C_eqn_template = (
 for i in 1:50
     # Automated Newton Linearization
     updated_bcs, C_eqn = linearize_physics(BCs, C_eqn_template; susp=true)
-    
+
     res = solve_equation!(C_eqn, C, updated_bcs.C, solvers.C, config)
-    
+
     if i % 10 == 0
         @printf("Iteration %d, C Res: %.2e, Mean C: %.4f\n", i, res, mean(C.values))
     end

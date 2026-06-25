@@ -47,10 +47,10 @@ schemes = (
 )
 
 config = Configuration(
-    solvers=nothing, 
-    schemes=schemes, 
-    runtime=Runtime(iterations=20, time_step=dt, write_interval=-1), 
-    hardware=hardware, 
+    solvers=nothing,
+    schemes=schemes,
+    runtime=Runtime(iterations=20, time_step=dt, write_interval=-1),
+    hardware=hardware,
     boundaries=BCs
 )
 
@@ -58,22 +58,22 @@ config = Configuration(
 
 for step in 1:5
     global h, p
-    
+
     # ── Define Monolithic Equations (abstract PDE -> BCs -> bind field) ──────
     # Same PDE definition style can be reused with different BCs/fields.
-    
+
     # Row 1 (p): p + γ ∇²h = 0   (cross term on h)
     pde_p = (
-          Si(ConstantScalar(1.0))                      
-        + Laplacian{Linear}(ConstantScalar(gamma), h) 
+          Si(ConstantScalar(1.0))
+        + Laplacian{Linear}(ConstantScalar(gamma), h)
         == Source(0.0)
     )
     L_p = pde_p → BCs.p
 
     # Row 2 (h): ∂h/∂t - ∇ ⋅ (M ∇p) + αh² = 0
     pde_h = (
-          Time{Euler}()                                
-        - Laplacian{Linear}(ConstantScalar(0.01), p)   
+          Time{Euler}()
+        - Laplacian{Linear}(ConstantScalar(0.01), p)
         + NonLinearSi(val -> 0.1 * val^2)             # Non-linear self-field term
         == Source(0.0)
     )
@@ -82,13 +82,13 @@ for step in 1:5
     # ── Solve via Newton ──────────────────────────────────────────────────────
     p_eqn = L_p(p)
     h_eqn = L_h(h)
-    
+
     sys = MonolithicSystem([p_eqn, h_eqn], [p, h])
     bcs_list = [BCs.p, BCs.h]
-    
+
     res = newton_solve!(sys, bcs_list, config; tol=1e-8, verbose=true)
-    
-    @printf("Step %d: Newton iterations = %d, Final Res = %.2e, Mean h = %.4f\n", 
+
+    @printf("Step %d: Newton iterations = %d, Final Res = %.2e, Mean h = %.4f\n",
             step, res.iterations, res.residuals[end], mean(h.values))
 end
 

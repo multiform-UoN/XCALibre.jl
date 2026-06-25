@@ -28,17 +28,17 @@ end
 #     end
 #     quote
 #     (; mesh) = phif
-#     (; boundary_cellsID, boundaries) = mesh 
+#     (; boundary_cellsID, boundaries) = mesh
 #     (; hardware) = config
 #     (; backend, workgroup) = hardware
-#     $(unpacked_BCs...) 
+#     $(unpacked_BCs...)
 #     end
 # end
 
 ## SCALAR INTERPOLATION
 
 function interpolate!(phif::FaceScalarField, phi::ScalarField, config)
-    # Extract values arrays from scalar fields 
+    # Extract values arrays from scalar fields
     vals = phi.values
     fvals = phif.values
 
@@ -220,7 +220,7 @@ end
 ## UPWIND SCALAR INTERPOLATION
 
 function interpolate_upwind!(phif::FaceScalarField, phi::ScalarField, mdotf, config)
-    # Extract values arrays from scalar fields 
+    # Extract values arrays from scalar fields
     vals = phi.values
     fvals = phif.values
 
@@ -307,7 +307,7 @@ end
 ## HARMONIC SCALAR INTERPOLATION
 
 function interpolate_harmonic!(phif::FaceScalarField, phi::ScalarField, config)
-    # Extract values arrays from scalar fields 
+    # Extract values arrays from scalar fields
     vals = phi.values
     fvals = phif.values
 

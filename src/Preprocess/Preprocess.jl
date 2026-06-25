@@ -8,6 +8,7 @@ using SparseMatricesCSR
 
 using Adapt
 using Atomix
+using KernelAbstractions
 import KernelAbstractions as KA
 using XCALibre.Multithread
 using XCALibre.Mesh

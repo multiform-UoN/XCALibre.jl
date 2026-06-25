@@ -2,7 +2,7 @@ export scheme!, scheme_source!
 
 #= NOTE:
 In source scheme the following indices are used and should be used with care:
-cID - Index of the cell outer loop. Use to index "b" 
+cID - Index of the cell outer loop. Use to index "b"
 cIndex - Index of the cell based on sparse matrix. Use to index "nzval_array"
 =#
 
@@ -45,7 +45,7 @@ end
     term::Operator, cell, cID, cIndex, prev, runtime, rho_prev
 ) = scheme_source!(term, cell, cID, cIndex, prev, runtime)
 
-# TIME 
+# TIME
 
 # SteadyState
 @inline function scheme!(
@@ -72,7 +72,7 @@ end
         volume = cell.volume
         vol_rdt = volume/runtime.dt[1]
         rho = term.flux[cID]
-        
+
         ac = rho * vol_rdt
         b = rho_prev[cID]*prev[cID]*vol_rdt
         return ac, b
@@ -82,8 +82,8 @@ end
         volume = cell.volume
         vol_rdt = volume/runtime.dt[1]
         rho = term.flux[cID]
-        
-        # Increment sparse and b arrays 
+
+        # Increment sparse and b arrays
         ac = rho * vol_rdt
         b = rho_prev[cID]*prev[cID]*vol_rdt
         return ac, b
@@ -101,7 +101,7 @@ end
         volume = cell.volume
         vol_rdt = volume/runtime.dt[1]
         rho = term.flux[cID]
-        
+
         ac = rho * vol_rdt
         b = rho_prev[cID]*prev[cID]*vol_rdt # Careful with non U_eqn (e.g. T eqn.)
         return ac, b
@@ -111,7 +111,7 @@ end
         volume = cell.volume
         vol_rdt = volume/runtime.dt[1]
         rho = term.flux[cID]
-        
+
         ac = rho * vol_rdt
         b = rho_prev[cID]*prev[cID]*vol_rdt
         return ac, b
@@ -120,11 +120,11 @@ end
 # LAPLACIAN
 
 @inline function scheme!(
-    term::Operator{F,P,I,Laplacian{Linear}}, 
+    term::Operator{F,P,I,Laplacian{Linear}},
     nzval_array, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime
     )  where {F,P,I}
 
-    
+
     (; area, normal, delta, e) = face
     Sf = ns*area*normal
     Af = norm(Sf)
@@ -132,7 +132,7 @@ end
     ## Potential simplified form for performance, needs checking before use in release
     # dPN = cellN.centre - cell.centre
     # n = ns*normal
-    # Ef = dPN*(norm(n)^2/(dPN⋅n))*area # this works 
+    # Ef = dPN*(norm(n)^2/(dPN⋅n))*area # this works
     # Ef = dPN*(one(typeof(ns))/(dPN⋅n))*area # a little faster but a few more iter
 
     # Use form below to ensure correctness, could be simplified for performance
@@ -150,7 +150,7 @@ end
     # Ef = ((Sf⋅Sf)/(Sf⋅d))*d
     # Ef_mag = norm(Ef)
     # ap = term.sign*(term.flux[fID]*Ef_mag)/Δ
-    
+
     # Increment sparse array
     ac = -ap
     an = ap
@@ -165,14 +165,14 @@ end
 
 # Linear
 @inline function scheme!(
-    term::Operator{F,P,I,Divergence{Linear}}, 
+    term::Operator{F,P,I,Divergence{Linear}},
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
     )  where {F,P,I}
 
     w = face.weight
     # signbit(ns) ? w = one(w) - w : w
     w = 0.5 + ns*(w - 0.5)
-    
+
     # Calculate link coefficients
     ap = term.sign*(term.flux[fID]*ns)
     ac = ap*w
@@ -186,12 +186,12 @@ end
 
 # Upwind
 @inline function scheme!(
-    term::Operator{F,P,I,Divergence{Upwind}}, 
+    term::Operator{F,P,I,Divergence{Upwind}},
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
     )  where {F,P,I}
     # Calculate link coefficients
     ap = term.sign*(term.flux[fID]*ns)
-    ac = max(ap, 0.0) 
+    ac = max(ap, 0.0)
     an = -max(-ap, 0.0)
     return ac, an
 end
@@ -202,18 +202,18 @@ end
 
 # LUST
 @inline function scheme!(
-    term::Operator{F,P,I,Divergence{LUST}}, 
+    term::Operator{F,P,I,Divergence{LUST}},
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
     )  where {F,P,I}
-    
+
     w = face.weight
     signbit(ns) ? w = one(w) - w : w
 
     # Calculate link coefficients
     ap = term.sign*(term.flux[fID]*ns)
-    acLinear = ap*w 
+    acLinear = ap*w
     anLinear = ap*(one(w) - w)
-    acUpwind = max(ap, 0.0) 
+    acUpwind = max(ap, 0.0)
     anUpwind = -max(-ap, 0.0)
     ac = 0.75*acLinear + 0.25*acUpwind
     an = 0.75*anLinear + 0.25*anUpwind
@@ -226,7 +226,7 @@ end
 
 # BoundedUpwind
 @inline function scheme!(
-    term::Operator{F,P,I,Divergence{BoundedUpwind}}, 
+    term::Operator{F,P,I,Divergence{BoundedUpwind}},
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
     )  where {F,P,I}
     # $$\mathcal{D}_{bounded} = \sum_f \phi_f \psi_f - \psi_P \sum_f \phi_f$$
@@ -251,18 +251,18 @@ end
     term::Operator{F,P,I,Biharmonic{T}},
     nzval_array, cell, face, cellN, ns, cIndex, nIndex, fID, prev, runtime
     )  where {F,P,I,T}
-    
+
     (; area, delta) = face
     gamma = term.flux[fID]
     coeff = gamma * area / delta
-    
+
     # MASTER (Self) contribution to diagonal
     # Note: On a standard 1st-order mesh, we approximate it by Laplacian(Laplacian(phi)).
     ac = coeff / delta
-    
+
     # NEIGHBOUR contribution
     an = -coeff / delta
-    
+
     return ac, an
 end
 

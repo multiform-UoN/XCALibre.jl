@@ -344,7 +344,7 @@ function update_dt!(runtime::Runtime{<:Any,<:Any,<:Any,<:AdaptiveTimeStepping}, 
 
     courant_factor = maxCo / (courant + eps())
     alphaCourant_factor = maxAlphaCo / (alphaCourant + eps())
-    
+
     new_dt_factor = min(courant_factor, alphaCourant_factor)
     new_dt_factor = clamp(new_dt_factor, minShrink, maxGrow)
 

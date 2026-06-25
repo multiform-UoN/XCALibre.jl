@@ -3,7 +3,7 @@
 # =============================================================================
 #
 # This example mimics the 'incompressible_KelvinVoigt' OpenFOAM benchmark.
-# It solves the standard mixed-form Stokes equations coupled to a 
+# It solves the standard mixed-form Stokes equations coupled to a
 # Kelvin-Voigt viscoelastic constitutive law.
 #
 # Equations:
@@ -150,7 +150,7 @@ for step in 1:config.runtime.iterations
     # 2. Update strain (gamma)
     grad!(∇u, uf, u, BCs.u, nothing, config)
     grad!(∇v, vf, v, BCs.v, nothing, config)
-    
+
     # γ^{n+1} = γ^n + 2D Δt  => γ_xx += 2 ∂u/∂x Δt
     gxx.values .+= 2.0 .* ∇u.result.x.values .* dt
     gyy.values .+= 2.0 .* ∇v.result.y.values .* dt

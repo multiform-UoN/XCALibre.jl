@@ -75,9 +75,9 @@ for step in 1:10
     for outer in 1:3
         res1 = solve_equation!(C1_eqn, config)
         res2 = solve_equation!(C2_eqn, config)
-        
+
         if outer == 3
-            @printf("Step %d: C1 Res = %.2e, C2 Res = %.2e, Mean C1 = %.4f\n", 
+            @printf("Step %d: C1 Res = %.2e, C2 Res = %.2e, Mean C1 = %.4f\n",
                     step, res1, res2, mean(C1.values))
         end
     end

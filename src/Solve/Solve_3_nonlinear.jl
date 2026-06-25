@@ -163,7 +163,7 @@ function linearize_physics(BCs, model_eqn::ModelEquation, other_fields=[]; susp=
     phi = get_phi(model_eqn)
     all_vars = [phi, other_fields...]
     var_indices = Dict(objectid(v.values) => k for (k, v) in enumerate(all_vars))
-    
+
     # 1. Linearise BCs (NonLinearRobin → Robin)
     new_bcs = linearize_bcs(BCs, phi)
 

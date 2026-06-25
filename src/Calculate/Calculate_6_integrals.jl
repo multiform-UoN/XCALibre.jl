@@ -79,7 +79,8 @@ end
     weighted_volume_integral(phi::ScalarField, weight_func) → Tf
 
 `∫ phi(x) * w(x, y, z) dV` where `w = weight_func(x, y, z)` is evaluated at each
-cell centroid.  Runs on the field's backend.
+cell centroid.  Runs on the field's backend. For GPU backends, `weight_func`
+must be callable from a device kernel.
 """
 function weighted_volume_integral(phi::ScalarField, weight_func::Func) where Func<:Function
     backend  = KA.get_backend(phi)
@@ -106,6 +107,7 @@ end
     weighted_volume_integral(phi::VectorField, weight_func) → Vector{3}
 
 `[∫ux*w dV, ∫uy*w dV, ∫uz*w dV]` with `w = weight_func(x, y, z)`.
+For GPU backends, `weight_func` must be callable from a device kernel.
 """
 function weighted_volume_integral(phi::VectorField, weight_func::Func) where Func<:Function
     backend = KA.get_backend(phi.x)

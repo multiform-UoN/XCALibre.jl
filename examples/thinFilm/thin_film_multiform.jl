@@ -34,7 +34,7 @@ mesh_dev = adapt(backend, mesh)
 # 2. Physics & Model Selection
 # ------------------------------------------------------------------------------
 # Choose your model: :viscous (h³/3μ) or :darcy (Kh/μ)
-model_type = :viscous 
+model_type = :viscous
 
 gamma = 0.001       # Surface tension coefficient
 mu = 1.0            # Viscosity
@@ -44,11 +44,11 @@ Db = 1e-4           # Biomass diffusion
 disjoining_pressure(h) = 1e-4 / (h^3 + 1e-6) # Example: vdW attractive-repulsive
 
 # Active Forcing σ_a(b)
-active_stress(b) = 0.5 * b 
+active_stress(b) = 0.5 * b
 
 # 3. Boundary Conditions
 # ------------------------------------------------------------------------------
-# Periodic or Symmetry is common for thin films. 
+# Periodic or Symmetry is common for thin films.
 # Here we use Zerogradient for a bounded container.
 BCs = assign(
     (
@@ -91,7 +91,7 @@ h.values .+= 0.001 .* rand(length(h.values))
 # 1. Solve the Biomass transport equation (decoupled).
 # 2. Iterate 'n_outer' times to converge the (h, p) coupling:
 #    a. Update mobility M(h) based on current height.
-#    b. Solve the Height evolution equation (h). 
+#    b. Solve the Height evolution equation (h).
 #       Implicit 4th-order surface tension is handled via the Biharmonic operator.
 # ==============================================================================
 
@@ -103,7 +103,7 @@ n_outer = 3 # Outer iterations per time step
 for t_step in 1:n_steps
     h_prev = ScalarField(mesh_dev); h_prev.values .= h.values
     b_prev = ScalarField(mesh_dev); b_prev.values .= b.values
-    
+
     # 1. Update Biomass (Decoupled transport update)
     # --------------------------------------------------------------------------
     L_b = ((
@@ -112,11 +112,11 @@ for t_step in 1:n_steps
         ==
         Source(0.0)
     ) → BCs.b) → solvers.b
-    
+
     b_eqn = L_b(b)
     @reset b_eqn.preconditioner = set_preconditioner(solvers.b.preconditioner, b_eqn)
     @reset b_eqn.solver = XCALibre._workspace(solvers.b.solver, XCALibre._b(b_eqn))
-    
+
     solve_equation!(b_eqn, config)
 
     # 2. Outer Loops for (h, p) Coupling
@@ -129,16 +129,16 @@ for t_step in 1:n_steps
         else # :darcy
             M_field.values .= h.values .* (1.0 / mu)
         end
-        
+
         # Interpolate mobility to faces for the Laplacian operator
         M_face = FaceScalarField(mesh_dev)
         for fID in eachindex(M_face.values)
             oc = mesh_dev.faces[fID].ownerCells
-            M_face.values[fID] = length(oc) > 1 ? 
-                0.5 * (M_field.values[oc[1]] + M_field.values[oc[2]]) : 
+            M_face.values[fID] = length(oc) > 1 ?
+                0.5 * (M_field.values[oc[1]] + M_field.values[oc[2]]) :
                 M_field.values[oc[1]]
         end
-        
+
         # 2b. Solve Height Evolution h
         # ----------------------------------------------------------------------
         # PDE: ∂h/∂t - ∇ ⋅ (M ∇p) + γ ∇²h_implicit = 0
@@ -146,7 +146,7 @@ for t_step in 1:n_steps
         # We use the Biharmonic operator to treat the surface tension implicitly.
         # This provides significant numerical stability, allowing for much larger
         # time steps than traditional explicit treatments.
-        
+
         # Abstract PDE def -> BCs -> apply to field (reusable pattern)
         pde_h = (
               Time{Euler}()
@@ -162,12 +162,12 @@ for t_step in 1:n_steps
         @reset h_eqn.solver = XCALibre._workspace(solvers.h.solver, XCALibre._b(h_eqn))
 
         res_h = solve_equation!(h_eqn, config)
-        
+
         # Note: Pressure (p) would be updated here based on h (Π(h) etc.)
         # p.values .= ... (simplified logic for this demonstration)
-        
+
         if outer == n_outer
-            @printf("Step %d, Outer %d: Res h = %.2e, Mean h = %.4f\n", 
+            @printf("Step %d, Outer %d: Res h = %.2e, Mean h = %.4f\n",
                     t_step, outer, res_h, mean(h.values))
         end
     end

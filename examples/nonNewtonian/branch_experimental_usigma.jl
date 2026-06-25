@@ -62,7 +62,7 @@ solvers = (
     sxy = SolverSetup(solver=Gmres(100), preconditioner=Jacobi(), convergence=1e-12, relax=1.0),
 )
 config = Configuration(solvers=solvers, schemes=(u=Schemes(), v=Schemes(), sxx=Schemes(), syy=Schemes(), sxy=Schemes()),
-                       runtime=Runtime(iterations=1, write_interval=-1, time_step=dt), hardware=hardware, 
+                       runtime=Runtime(iterations=1, write_interval=-1, time_step=dt), hardware=hardware,
                        boundaries=(u=u_bcs, v=v_bcs, sxx=s_bcs, syy=s_bcs, sxy=s_bcs))
 
 # ── 7. Equations ──

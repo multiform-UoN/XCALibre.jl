@@ -2,11 +2,11 @@ export csimple!
 
 """
     csimple!(
-        model_in, config; 
+        model_in, config;
         output=VTK(), pref=nothing, ncorrectors=0, inner_loops=0
     )
 
-Compressible variant of the SIMPLE algorithm with a sensible enthalpy transport equation for the energy. 
+Compressible variant of the SIMPLE algorithm with a sensible enthalpy transport equation for the energy.
 
 # Input arguments
 
@@ -26,13 +26,13 @@ Compressible variant of the SIMPLE algorithm with a sensible enthalpy transport 
 - `e` Vector of energy residuals for each iteration.
 
 """
-function csimple!(model, config; output=VTK(), pref=nothing, ncorrectors=0, inner_loops=0) 
+function csimple!(model, config; output=VTK(), pref=nothing, ncorrectors=0, inner_loops=0)
 
     residuals = setup_compressible_solvers(
-        CSIMPLE, model, config; 
+        CSIMPLE, model, config;
         output=output,
-        pref=pref, 
-        ncorrectors=ncorrectors, 
+        pref=pref,
+        ncorrectors=ncorrectors,
         inner_loops=inner_loops
         )
     return residuals
@@ -40,9 +40,9 @@ end
 
 # Setup for all compressible algorithms
 function setup_compressible_solvers(
-    solver_variant, model, config; 
+    solver_variant, model, config;
     output=VTK(), pref=nothing, ncorrectors=0, inner_loops=0
-    ) 
+    )
 
     (; solvers, schemes, runtime, hardware, boundaries) = config
 
@@ -54,7 +54,7 @@ function setup_compressible_solvers(
     mesh = model.domain
 
     @info "Pre-allocating fields..."
-    
+
     ∇p = Grad{schemes.p.gradient}(p)
     mdotf = FaceScalarField(mesh)
     rhorDf = FaceScalarField(mesh)
@@ -67,9 +67,9 @@ function setup_compressible_solvers(
 
     U_eqn = (
         Time{schemes.U.time}(rho, U)
-        + Divergence{schemes.U.divergence}(mdotf, U) 
-        - Laplacian{schemes.U.laplacian}(mueff, U) 
-        == 
+        + Divergence{schemes.U.divergence}(mdotf, U)
+        - Laplacian{schemes.U.laplacian}(mueff, U)
+        ==
         - Source(∇p.result)
         + Source(mueffgradUt)
     ) → VectorEquation(U, boundaries.U)
@@ -84,9 +84,9 @@ function setup_compressible_solvers(
 
         pconv = FaceScalarField(mesh)
         p_eqn = (
-            - Laplacian{schemes.p.laplacian}(rhorDf, p) 
-            + Divergence{schemes.p.divergence}(pconv, p) 
-            == 
+            - Laplacian{schemes.p.laplacian}(rhorDf, p)
+            + Divergence{schemes.p.divergence}(pconv, p)
+            ==
             - Source(divHv)
         ) → ScalarEquation(p, boundaries.p)
 
@@ -98,12 +98,12 @@ function setup_compressible_solvers(
     @reset p_eqn.preconditioner = set_preconditioner(solvers.p.preconditioner, p_eqn)
 
     @info "Pre-allocating solvers..."
-     
+
     @reset U_eqn.solver = _workspace(solvers.U.solver, _b(U_eqn, XDir()))
     @reset U_eqn.setup = solvers.U
     @reset p_eqn.solver = _workspace(solvers.p.solver, _b(p_eqn))
     @reset p_eqn.setup = solvers.p
-  
+
     @info "Initialising energy model..."
     energyModel = initialise(model.energy, model, mdotf, rho, p_eqn, config)
 
@@ -113,18 +113,18 @@ function setup_compressible_solvers(
     residuals  = solver_variant(
         model, turbulenceModel, energyModel, ∇p, U_eqn, p_eqn, config;
         output=output,
-        pref=pref, 
-        ncorrectors=ncorrectors, 
+        pref=pref,
+        ncorrectors=ncorrectors,
         inner_loops=inner_loops)
 
-    return residuals    
+    return residuals
 end # end function
 
 function CSIMPLE(
-    model, turbulenceModel, energyModel, ∇p, U_eqn, p_eqn, config ; 
+    model, turbulenceModel, energyModel, ∇p, U_eqn, p_eqn, config ;
     output=VTK(), pref=nothing, ncorrectors=0, inner_loops=0
     )
-    
+
     # Extract model variables and configuration
     (; U, p, Uf, pf) = model.momentum
     (; nu, nuf, rho, rhof) = model.fluid
@@ -134,10 +134,10 @@ function CSIMPLE(
     (; solvers, schemes, runtime, hardware, boundaries, postprocess) = config
     (; iterations, write_interval) = runtime
     (; backend) = hardware
-    
+
     dt_cpu = zeros(_get_float(mesh), 1)
     copyto!(dt_cpu, config.runtime.dt)
-    
+
     postprocess = convert_time_to_iterations(postprocess,model,dt_cpu[1],iterations)
     mdotf = get_flux(U_eqn, 2)
     mueff = get_flux(U_eqn, 3)
@@ -151,10 +151,10 @@ function CSIMPLE(
     end
 
     outputWriter = initialise_writer(output, model.domain)
-    
+
     @info "Allocating working memory..."
 
-    # Define aux fields 
+    # Define aux fields
     gradU = Grad{schemes.U.gradient}(U)
     gradUT = T(gradU)
     S = StrainRate(gradU, gradUT, U, Uf)
@@ -176,19 +176,19 @@ function CSIMPLE(
 
     # Pre-allocate auxiliary variables
     TF = _get_float(mesh)
-    prev = KernelAbstractions.zeros(backend, TF, n_cells) 
+    prev = KernelAbstractions.zeros(backend, TF, n_cells)
 
-    # Pre-allocate vectors to hold residuals 
+    # Pre-allocate vectors to hold residuals
     R_ux = ones(TF, iterations)
     R_uy = ones(TF, iterations)
     R_uz = ones(TF, iterations)
     R_p = ones(TF, iterations)
     R_e = ones(TF, iterations)
-    
+
     # Initial calculations
     time = zero(TF) # assuming time=0
-    interpolate!(Uf, U, config)   
-    correct_boundaries!(Uf, U, boundaries.U, time, config) 
+    interpolate!(Uf, U, config)
+    correct_boundaries!(Uf, U, boundaries.U, time, config)
     grad!(∇p, pf, p, boundaries.p, time, config)
     thermo_Psi!(model, Psi); thermo_Psi!(model, Psif, config);
     @. rho.values = Psi.values * p.values
@@ -212,7 +212,7 @@ function CSIMPLE(
         div!(divmugradUTx, mugradUTx, config)
         div!(divmugradUTy, mugradUTy, config)
         div!(divmugradUTz, mugradUTz, config)
-        
+
         @. mueffgradUt.x.values = divmugradUTx.values
         @. mueffgradUt.y.values = divmugradUTy.values
         @. mueffgradUt.z.values = divmugradUTz.values
@@ -237,7 +237,7 @@ function CSIMPLE(
 
         remove_pressure_source!(U_eqn, ∇p, config)
         H!(Hv, U, U_eqn, config)
-        
+
         # Interpolate faces
         interpolate!(Uf, Hv, config) # Careful: reusing Uf for interpolation
         correct_boundaries!(Uf, Hv, boundaries.U, time, config)
@@ -258,13 +258,13 @@ function CSIMPLE(
             @. mdotf.values *= rhof.values
             div!(divHv, mdotf, config)
         end
-        
+
         # Pressure calculations
         rp = 0.0
         @. prev = p.values
         if typeof(model.fluid) <: Compressible
             rp = solve_equation!(
-                p_eqn, config; 
+                p_eqn, config;
                 ref=nothing, irelax=solvers.p.relax) # perform implicit relaxation
         elseif typeof(model.fluid) <: WeaklyCompressible
             rp = solve_equation!(p_eqn, config; ref=nothing)
@@ -276,36 +276,36 @@ function CSIMPLE(
         end
 
         explicit_relaxation!(p, prev, solvers.p.relax, config)
-        grad!(∇p, pf, p, boundaries.p, time, config) 
+        grad!(∇p, pf, p, boundaries.p, time, config)
         limit_gradient!(schemes.p.limiter, ∇p, p, config)
 
         # non-orthogonal correction
         for i ∈ 1:ncorrectors
-            discretise!(p_eqn, p, config)       
+            discretise!(p_eqn, p, config)
             apply_boundary_conditions!(p_eqn, config; time=time)
             setReference!(p_eqn, pref, 1, config)
             nonorthogonal_face_correction(p_eqn, ∇p, rhorDf, config)
             update_preconditioner!(p_eqn.preconditioner, p.mesh, config)
             rp = solve_system!(p_eqn, solvers.p, p, nothing, config)
             explicit_relaxation!(p, prev, solvers.p.relax, config)
-            
-            grad!(∇p, pf, p, boundaries.p, time, config) 
+
+            grad!(∇p, pf, p, boundaries.p, time, config)
             limit_gradient!(schemes.p.limiter, ∇p, p, config)
         end
 
         # Correct mass flux and cell velocity
 
         if typeof(model.fluid) <: Compressible
-            @. mdotf.values += pconv.values*(pf.values) 
+            @. mdotf.values += pconv.values*(pf.values)
             correct_mass_flux!(model, mdotf, p, pconv, rhorDf, config)
         elseif typeof(model.fluid) <: WeaklyCompressible
-            correct_mass_flux!(mdotf, p_eqn, config) 
+            correct_mass_flux!(mdotf, p_eqn, config)
         end
 
         correct_velocity!(U, Hv, ∇p, rD, config)
-        
+
         # Perform turbulence calculations and update eddy viscosity
-        turbulence!(turbulenceModel, model, S, prev, time, config) 
+        turbulence!(turbulenceModel, model, S, prev, time, config)
         update_nueff!(nueff, nu, model.turbulence, config)
 
         if typeof(model.fluid) <: WeaklyCompressible
@@ -331,8 +331,8 @@ function CSIMPLE(
             Uz_convergence = rz <= solvers.U.convergence
         end
 
-        if (R_ux[iteration] <= solvers.U.convergence && 
-            R_uy[iteration] <= solvers.U.convergence && 
+        if (R_ux[iteration] <= solvers.U.convergence &&
+            R_uy[iteration] <= solvers.U.convergence &&
             Uz_convergence &&
             R_p[iteration] <= solvers.p.convergence &&
             turbulenceModel.state.converged)
@@ -358,7 +358,7 @@ function CSIMPLE(
                 ]
             )
         runtime_postprocessing!(postprocess,iteration,iterations,S,time,config)
-        if iteration%write_interval + signbit(write_interval) == 0      
+        if iteration%write_interval + signbit(write_interval) == 0
             save_output(model, outputWriter, iteration, time, config)
             save_postprocessing(
                 postprocess,iteration,time,mesh,outputWriter,config.boundaries)
@@ -388,21 +388,21 @@ end
 
 @kernel function _correct_mass_flux_compressible(
     fluid, mdotf, p, pconv, gamma_f, faces, n_bfaces)
-    
+
     i = @index(Global)
     fID = i + n_bfaces
 
-    @inbounds begin 
+    @inbounds begin
         face = faces[fID]
         # Unpack the geometric properties
-        (; ownerCells, area, delta) = face 
-        
+        (; ownerCells, area, delta) = face
+
         cID1 = ownerCells[1]
         cID2 = ownerCells[2]
-        
+
         p1 = p[cID1]
         p2 = p[cID2]
-        
+
         if typeof(fluid) <: WeaklyCompressible
             minus_Df = -gamma_f[fID] * (area / delta)
             mdotf[fID] += minus_Df * (p2 - p1)
@@ -442,17 +442,17 @@ end
 
     fID = i + n_bfaces
     face = faces[fID]
-    (; area, normal, ownerCells) = face 
+    (; area, normal, ownerCells) = face
     cID1 = ownerCells[1]
     cID2 = ownerCells[2]
-    
+
     # Linear interpolation of gradU at the face
     gradUf = 0.5 * (gradU[cID1] + gradU[cID2])
-    
+
     # Explicit part of the stress projection: mu * ( (grad U)^T . n - 2/3 * (div U) * n )
     divU = sum(diag(gradUf))
     projection = transpose(gradUf) * normal - (2/3 * divU) * normal
-    
+
     mueffi = mueff[fID]
     mugradUTx[fID] = mueffi * projection[1] * area
     mugradUTy[fID] = mueffi * projection[2] * area
@@ -464,14 +464,14 @@ end
     fID = @index(Global)
 
     face = faces[fID]
-    (; area, normal, ownerCells) = face 
+    (; area, normal, ownerCells) = face
     cID1 = ownerCells[1]
     gradUi = gradU[cID1]
-    
+
     # Explicit part of the stress projection at boundary: mu * ( (grad U)^T . n - 2/3 * (div U) * n )
     divUi = sum(diag(gradUi))
     projection = transpose(gradUi) * normal - (2/3 * divUi) * normal
-    
+
     mueffi = mueff[fID]
     mugradUTx[fID] = mueffi * projection[1] * area
     mugradUTy[fID] = mueffi * projection[2] * area

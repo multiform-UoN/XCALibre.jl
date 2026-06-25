@@ -3,7 +3,7 @@
 # =============================================================================
 #
 # This example mimics the 'GMRT_Maxwell_incompFoam' OpenFOAM benchmark.
-# It solves the standard mixed-form Stokes equations coupled to a 
+# It solves the standard mixed-form Stokes equations coupled to a
 # Maxwell viscoelastic constitutive law.
 #
 # Geometry: 2D Straight Channel (quad40.unv, 40x40 mesh, 1m x 1m)

@@ -6,9 +6,9 @@ using Statistics
 # ==============================================================================
 # Example: Scalar Transport with Non-linear Implicit Source Term
 # ==============================================================================
-# This script demonstrates the use of NonLinearSi, a custom operator I added 
+# This script demonstrates the use of NonLinearSi, a custom operator I added
 # to XCALibre to allow automatic linearization of arbitrary reaction terms F(u).
-# It uses ForwardDiff.jl to compute the Jacobian (diagonal contribution) 
+# It uses ForwardDiff.jl to compute the Jacobian (diagonal contribution)
 # and automatically updates the system matrix.
 
 # 1. Setup Mesh

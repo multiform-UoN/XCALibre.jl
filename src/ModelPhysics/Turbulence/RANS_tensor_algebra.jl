@@ -1,6 +1,6 @@
 export inner_product!
 export double_inner_product!
-export magnitude!, magnitude2!
+export magnitude!, magnitude2!, square!
 
 inner_product!(S::F, ∇1::Grad, ∇2::Grad, config) where F<:ScalarField = begin
     (; hardware) = config
@@ -60,7 +60,7 @@ end
     i = @index(Global)
     @inbounds begin
         Sjk = S[i]
-        magS[i] = dot(Sjk, Sjk) * scale_factor
+        magS[i] = (Sjk⋅Sjk) * scale_factor
     end
 end
 
