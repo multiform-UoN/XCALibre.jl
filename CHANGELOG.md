@@ -13,14 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 *  Added runtime probe extraction [#115](@ref)
 *  Added initialisation logic for new Multiphase solver user-level API [#117](@ref)
 *  New Eulerian Thin Film model solver (2D only) [#120](@ref)
+*  Added `setField_Expression!` to `SetFields` utility to initialise function-based fields. [#124](@ref)
+*  Added VanLeer, upwind, and gradient interpolation schemes for scalar and vector face fields [#124](@ref)
+*  Added multiphase solver (VOF model only) with two supporting functionality tests. [#132](@ref)
+
 
 
 ### Fixed
 * Add implementation of `Periodic` boundaries to handle the implicit source term - fixes operation of models that use `Si` terms [#95](@ref)
 * Fixed implementation of implicit boundaries in [#96](@ref) which where missing atomics [#100](@ref)
-* Fixed calculation of the residuals to use the relative residual norm, norm(b - Ax)/norm(b), the numerator in this expression was calculated incorrectly previously, giving a 1/sqrt(n) relation (where n is the number of cells in the grid). whilst the operation of the solvers remains the same, user may find that convergence criteria may need to be increased (specially for larger grids)[#102](@ref)
+* Fixed calculation of the residuals to use the relative residual norm, norm(b - Ax)/norm(b), the numerator in this expression was calculated incorrectly previously, giving a 1/sqrt(n) relation (where n is the number of cells in the grid). whilst the operation of the solvers remains the same, user may find that convergence criteria may need to be increased (specially for larger grids)[#102](@ref). Move calculation to scale residuals in [#134](@ref)
 * UNV2: Fix calculation of cell volumes and centroid for boundary cells was incorrect and missing boundary face contributions (only for 2D UNV meshes)[#106](@ref)
 * Fixed implementation of k-omega LKE transition model and how wall distance field is calculated to ensure it is GPU compatible [#109](@ref)
+* Fixed mixed-precision mesh conversion to preserve user-selected integer and floating-point types [#125](@ref)
+* Fixed pressure boundary mass-flux correction [#125](@ref)
+* Fixed turbulent effective viscosity updates so turbulence models include eddy viscosity again, reverting a regression introduced in [#120](@ref) [#125](@ref)
   
 ### Changed
 * Improved stability of `Periodic` boundaries by making the implementation fully implicit [#96](@ref)
@@ -30,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * New method to enforce matrix symmetry of scalar model equations when the only term is a laplacian [#100](@ref)
 * Change calculation of face interpolation weights to use face normal aligned weights, this is more physical than the current method using face-based distances (in preparation for formal support for non-orthogonality correction)[#101](@ref)
 * 20x improvement loading and processing 3D UNV mesh files [#106](@ref)
+* Updated discretisation, boundary condition, turbulence, solver, and preconditioner paths to avoid unintended `Float64` promotion on `Float32` meshes [#125](@ref)
+* FOAM reader has been updated for robustness and speed (~4x faster) [#126](@ref)
+* Rewrote `pressure_force` and `viscous_force` as backend-agnostic (CPU/GPU) kernels, changed their signature to `(patch, model, config)`, and corrected the pressure force to scale by reference density only for incompressible (kinematic pressure) flows [#129](@ref)
+* Improved calculation of viscous force using wall eddy viscosity and perpendicular cell-to-face distance [#130](@ref)
 
 ### Breaking
 * No breaking changes

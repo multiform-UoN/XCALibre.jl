@@ -95,11 +95,11 @@ divu_src = ScalarField(mesh_dev); initialise!(divu_src, 0.0)
 
 # ── Solver / config ───────────────────────────────────────────────────────────
 solvers = (
-    u = SolverSetup(solver=Bicgstab(), preconditioner=Jacobi(),
+    u = SolverSetup(solver=Gmres(), preconditioner=Jacobi(),
                     convergence=1e-10, relax=1.0),
-    v = SolverSetup(solver=Bicgstab(), preconditioner=Jacobi(),
+    v = SolverSetup(solver=Gmres(), preconditioner=Jacobi(),
                     convergence=1e-10, relax=1.0),
-    p = SolverSetup(solver=Bicgstab(), preconditioner=Jacobi(),
+    p = SolverSetup(solver=Gmres(), preconditioner=Jacobi(),
                     convergence=1e-10, relax=1.0),
 )
 schemes = (u = Schemes(laplacian=Linear),
@@ -149,29 +149,29 @@ alpha_dt_cst = ConstantScalar(alpha / dt_val)
 # Cross-field terms (ScalarGrad, VectorDiv, GradDiv off-diagonal) carry their
 # target field explicitly and are kept as pre-bound Operators unchanged.
 
-L_u = (
+L_u = ((
     - Laplacian{Linear}(mu_cst)               # -μ∇²u  (binds to u)
     - GradDiv{Linear,1,1}(lam_mu)             # -(μ+λ)∂²u/∂x²  (binds to u)
     - GradDiv{Linear,1,2}(lam_mu, v)          # -(μ+λ)∂²v/∂x∂y  (v pre-bound)
     + ScalarGrad{Linear,1}(alpha_cst, p)      # +α∂p/∂x  (p pre-bound)
     == Source(0.0)
-) → BCs.u → solvers.u
+) → BCs.u) → solvers.u
 
-L_v = (
+L_v = ((
     - Laplacian{Linear}(mu_cst)               # -μ∇²v  (binds to v)
     - GradDiv{Linear,2,1}(lam_mu, u)          # -(μ+λ)∂²u/∂y∂x  (u pre-bound)
     - GradDiv{Linear,2,2}(lam_mu)             # -(μ+λ)∂²v/∂y²  (binds to v)
     + ScalarGrad{Linear,2}(alpha_cst, p)      # +α∂p/∂y  (p pre-bound)
     == Source(0.0)
-) → BCs.v → solvers.v
+) → BCs.v) → solvers.v
 
-L_p = (
+L_p = ((
     Time{Euler}(Se_cst)                       # Sε/dt p  (binds to p)
     - Laplacian{Linear}(k_cst)                # -k∇²p  (binds to p)
     + VectorDiv{Linear,1}(alpha_dt_cst, u)   # +α/dt ∂u/∂x  (u pre-bound)
     + VectorDiv{Linear,2}(alpha_dt_cst, v)   # +α/dt ∂v/∂y  (v pre-bound)
     == Source(divu_src)                       # +α/dt ∇·u^n on RHS (updated each step)
-) → BCs.p → solvers.p
+) → BCs.p) → solvers.p
 
 u_eqn = L_u(u)
 v_eqn = L_v(v)
@@ -196,8 +196,10 @@ for step in 1:n_steps
     grad!(∇v_fld, vf, v, BCs.v, nothing, config)
     @. divu_src.values = alpha / dt_val * (∇u.result.x.values + ∇v_fld.result.y.values)
 
-    # Solve the monolithic 3×3 block system (u, v, p simultaneously)
-    res = solve_monolithic!(sys, (BCs.u, BCs.v, BCs.p), config)
+    # Solve the monolithic 3×3 block system (u, v, p simultaneously).
+    # equilibrate=true applies row/column scaling — essential for Biot because
+    # the elastic (O(E/dx)) and flow (O(k/dx)) diagonal entries differ by ~1e8.
+    res = solve_monolithic!(sys, (BCs.u, BCs.v, BCs.p), config; equilibrate=true)
 
     if step % 20 == 0 || step == 1
         p_mean = mean(p.values)

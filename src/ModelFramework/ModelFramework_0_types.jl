@@ -2,7 +2,7 @@ export AbstractOperator, AbstractSource, AbstractEquation
 export Operator, OperatorTemplate, PDEOperator, ScaledFlux, Source, Src
 export Time, Laplacian, Divergence, Si, CoupledSi, NonLinearSi
 export NonlinearMap, NonlinearOperator, NonlinearOperatorTemplate, AffineOperator
-export Biharmonic
+export Biharmonic, _get_flux
 export GradDiv
 export ScalarGrad, VectorDiv
 export MonolithicSystem
@@ -98,6 +98,12 @@ Time{T}(flux, phi) where T = Operator(
     flux, phi, 1, Time{T}()
     )
 
+# Support passing ConstantScalar or Number as time coefficient (flux/storage)
+# for abstract PDE definitions, e.g. Time{Euler}(Se) where Se is storage coeff.
+# These produce OperatorTemplate (flux set, phi deferred for later bind).
+Time{T}(flux::ConstantScalar) where T = OperatorTemplate(flux, 1, TimeTerm{T}())
+Time{T}(flux::Number) where T = OperatorTemplate(ConstantScalar(flux), 1, TimeTerm{T}())
+
 Time{T}(phi::AbstractField) where T = Operator(
     ConstantScalar(one(_get_int(phi.mesh))), phi, 1, Time{T}()
     )
@@ -153,6 +159,10 @@ struct AffineOperator{O<:Operator, J, C, R, Fn} <: AbstractOperator
     map::Fn
 end
 Adapt.@adapt_structure AffineOperator
+
+_get_flux(term::Operator) = term.flux
+_get_flux(term::AffineOperator) = _get_flux(term.op)
+_get_flux(term) = nothing
 
 # Type tag for nonlinear implicit source (linearised each outer iteration)
 struct NonLinearSi{Fun}

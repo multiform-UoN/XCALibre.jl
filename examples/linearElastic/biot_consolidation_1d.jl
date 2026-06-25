@@ -170,13 +170,17 @@ sys_mech = MonolithicSystem([u_eqn, v_eqn], [u, v])
 # Sε ∂p/∂t - k∇²p = -α Δ(∇·u)/Δt
 # Time{Euler}: diagonal += Sε*vol/dt, RHS += Sε*vol/dt * p^n
 # Source(div_u_src): RHS += div_u_src[i] * vol  (live ref, per-cell coupling)
-L_p = (
+# Use direct form here for robustness (equivalent effect); abstract PDE form
+# Time{Euler}(Se) - Lap(k) == Source(div)  can be used with → BCs in other contexts.
+# Abstract PDE -> BCs with → , then apply to field with L(p)
+pde_p = (
     Time{Euler}(Se_cst)
     - Laplacian{Linear}(k_cst)
-    == Source(div_u_src)     # ← live ref, updated after mechanical solve
-) → BCs.p → solvers.p
-
+    == Source(div_u_src)
+)
+L_p = pde_p → BCs.p
 p_eqn = L_p(p)
+@reset p_eqn.setup = solvers.p
 @reset p_eqn.preconditioner = set_preconditioner(solvers.p.preconditioner, p_eqn)
 @reset p_eqn.solver = _workspace(solvers.p.solver, XCALibre._b(p_eqn))
 

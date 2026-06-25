@@ -59,22 +59,25 @@ config = Configuration(
 for step in 1:5
     global h, p
     
-    # ── Define Monolithic Equations ───────────────────────────────────────────
+    # ── Define Monolithic Equations (abstract PDE -> BCs -> bind field) ──────
+    # Same PDE definition style can be reused with different BCs/fields.
     
-    # Row 1 (p): p + γ ∇²h = 0
-    L_p = ((
+    # Row 1 (p): p + γ ∇²h = 0   (cross term on h)
+    pde_p = (
           Si(ConstantScalar(1.0))                      
         + Laplacian{Linear}(ConstantScalar(gamma), h) 
         == Source(0.0)
-    ) → BCs.p)
+    )
+    L_p = pde_p → BCs.p
 
     # Row 2 (h): ∂h/∂t - ∇ ⋅ (M ∇p) + αh² = 0
-    L_h = ((
+    pde_h = (
           Time{Euler}()                                
         - Laplacian{Linear}(ConstantScalar(0.01), p)   
         + NonLinearSi(val -> 0.1 * val^2)             # Non-linear self-field term
         == Source(0.0)
-    ) → BCs.h)
+    )
+    L_h = pde_h → BCs.h
 
     # ── Solve via Newton ──────────────────────────────────────────────────────
     p_eqn = L_p(p)

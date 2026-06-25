@@ -66,7 +66,11 @@ function monolithic_discretise!(
                     A_mono.nzval[nIndex_mono] += an
                 end
 
-                ac_sc, b_c = scheme_source!(term, cell, cID, cIndex_mono, prev, runtime)
+                rho_prev = _get_flux(term)
+                if isnothing(rho_prev)
+                    rho_prev = ConstantScalar(one(eltype(prev)))
+                end
+                ac_sc, b_c = scheme_source!(term, cell, cID, cIndex_mono, prev, runtime, rho_prev)
                 A_mono.nzval[cIndex_mono] += ac_sum + ac_sc
                 b_mono[row] += b_c
             end

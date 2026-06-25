@@ -48,7 +48,7 @@ Preconditioner{NormDiagonal}(A::AbstractMatrix) = begin
     F = eltype(A)
     m, n = size(A)
     m == n || throw("Matrix not square")
-    S = KernelAbstractions.zeros(backend, F, m)
+    S = _convert_array!(zeros(F, m), backend)
     P = opDiagonal(S)
     Preconditioner{NormDiagonal,typeof(A),typeof(P),typeof(S)}(A,P,S)
 end
@@ -58,7 +58,7 @@ Preconditioner{Jacobi}(A::AbstractMatrix) = begin
     F = eltype(A)
     m, n = size(A)
     m == n || throw("Matrix not square")
-    S = KernelAbstractions.zeros(backend, F, m)
+    S = _convert_array!(zeros(F, m), backend)
     P = opDiagonal(S)
     Preconditioner{Jacobi,typeof(A),typeof(P),typeof(S)}(A,P,S)
 end

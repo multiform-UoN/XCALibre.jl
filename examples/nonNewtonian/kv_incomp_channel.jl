@@ -152,9 +152,9 @@ for step in 1:config.runtime.iterations
     grad!(∇v, vf, v, BCs.v, nothing, config)
     
     # γ^{n+1} = γ^n + 2D Δt  => γ_xx += 2 ∂u/∂x Δt
-    gxx.values .+= 2.0 .* ∇u.x.values .* dt
-    gyy.values .+= 2.0 .* ∇v.y.values .* dt
-    gxy.values .+= (∇u.y.values .+ ∇v.x.values) .* dt
+    gxx.values .+= 2.0 .* ∇u.result.x.values .* dt
+    gyy.values .+= 2.0 .* ∇v.result.y.values .* dt
+    gxy.values .+= (∇u.result.y.values .+ ∇v.result.x.values) .* dt
 
     @printf("Step %d, Residual: %.2e, max|u|: %.4f\n", step, res, maximum(abs.(u.values)))
 end
