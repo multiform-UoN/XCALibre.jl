@@ -1,10 +1,14 @@
-using ForwardDiff
-export NonLinearRobin, update_nonlinear_robin!
+export NonLinearRobin, linearize_boundary, update_nonlinear_robin, update_nonlinear_robin!
 
-struct NonLinearRobinValue{Fun}
-    flux_func::Fun
+struct NonLinearRobinValue{M}
+    map::M
 end
 Adapt.@adapt_structure NonLinearRobinValue
+
+@inline Base.getproperty(value::NonLinearRobinValue, name::Symbol) =
+    name === :flux_func ? getfield(value, :map).func :
+    name === :derivative ? getfield(value, :map).derivative :
+    getfield(value, name)
 
 struct NonLinearRobin{I,V,R<:UnitRange} <: AbstractBoundary
     ID::I
@@ -13,79 +17,121 @@ struct NonLinearRobin{I,V,R<:UnitRange} <: AbstractBoundary
 end
 Adapt.@adapt_structure NonLinearRobin
 
-NonLinearRobin(name::Symbol, flux_func::Function) = begin
-    NonLinearRobin(name, NonLinearRobinValue(flux_func), 0:0)
-end
+NonLinearRobin(name::Symbol, map::NonlinearMap) =
+    NonLinearRobin(name, NonLinearRobinValue(map), 0:0)
+NonLinearRobin(name::Symbol, flux_func::Function) =
+    NonLinearRobin(name, NonlinearMap(flux_func))
+NonLinearRobin(name::Symbol, flux_func::Function, derivative::Function) =
+    NonLinearRobin(name, NonlinearMap(flux_func, derivative))
 
 adapt_value(value::NonLinearRobinValue, mesh) = value
 
-"""
-    update_nonlinear_robin!(BCs, field)
-
-Updates Robin boundary conditions that were derived from NonLinearRobin.
-This should be called inside the simulation loop before `solve_equation!`.
-"""
-function update_nonlinear_robin!(BCs, field)
-    mesh = field.mesh
-    boundaries = mesh.boundaries
-    boundary_cellsID = mesh.boundary_cellsID
-
-    # We assume the user has a NamedTuple of BCs for different fields
-    # We look for Robin BCs that have a 'source_nonlinear' property or similar
-    # For now, let's just make a manual mapping or a specific struct.
-
-    # Better: The user provides the NonLinearRobin definitions,
-    # and we update the corresponding Robin BCs in the config.
-end
-
-# We can actually make NonLinearRobin a "Generator" for Robin BCs.
-# But XCALibre's config.boundaries is usually a NamedTuple of Tuples of BCs.
-
 @define_boundary NonLinearRobin Laplacian{Linear} begin
-    # This shouldn't be called directly in the kernel if we linearize outside.
-    # But if we want it to be "automatic", we could try to linearize here.
-    # However, ForwardDiff is NOT GPU compatible and slow in kernels.
-    error("NonLinearRobin must be linearized before discretisation. Use linearize_boundary!")
+    error("NonLinearRobin must be linearized to Robin before assembly. Call update_nonlinear_robin or linearize_physics first.")
 end
 
-# Implementation of a helper to transform NonLinearRobin to Robin
-function linearize_boundary(bc::NonLinearRobin, c_val)
-    f = bc.value.flux_func
-    # Use ForwardDiff to get f(c) and f'(c)
-    f0 = f(c_val)
-    df0 = ForwardDiff.derivative(f, c_val)
+@inline _nonlinear_robin_value(map::NonlinearMap, value) = map.func(value)
 
-    # grad(c).n = f(c)  =>  grad(c).n \approx f(c0) + f'(c0)(c - c0)
-    # grad(c).n - f'(c0)c = f(c0) - f'(c0)c0
-    # Robin: b*grad(c).n + a*c = value
-    # Matches: b = 1, a = -df0, value = f0 - df0*c_val
-    return Robin(bc.ID, RobinValue(a=-df0, b=1.0, value=f0 - df0*c_val), bc.IDs_range)
+@inline function _nonlinear_robin_derivative(map::NonlinearMap, value, derivative)
+    if map.derivative !== nothing
+        return map.derivative(value)
+    elseif derivative !== nothing
+        return derivative(map, value)
+    else
+        error("NonLinearRobin requires an analytic derivative for GPU-safe lowering. Construct it as NonLinearRobin(name, f, df), NonLinearRobin(name, NonlinearMap(f, df)), or call from linearize_physics on a supported CPU AD path.")
+    end
 end
 
-function update_nonlinear_robin(field_bcs, field)
-    # Only proceed if we have NonLinearRobin BCs
-    has_nonlinear = any(bc -> typeof(bc) <: NonLinearRobin, field_bcs)
-    !has_nonlinear && return field_bcs
+@inline function _assert_cpu_nonlinear_robin(field)
+    backend = _get_backend(field.mesh)
+    backend isa CPU && return nothing
+    error("NonLinearRobin patch linearization currently requires a CPU-resident field because it computes a patch representative value before assembly. For GPU solves, linearize on a CPU field or use a matrix-free residual path with a device-callable flux and derivative.")
+end
 
-    mesh = field.mesh
-    boundary_cellsID = mesh.boundary_cellsID
+function _patch_average(bc::NonLinearRobin, field)
+    boundary_cellsID = field.mesh.boundary_cellsID
+    patch_ids = bc.IDs_range
+    nfaces = length(patch_ids)
+    nfaces == 0 && return zero(_get_float(field.mesh))
 
-    new_bcs = map(field_bcs) do bc
-        if typeof(bc) <: NonLinearRobin
-            # Linearize using patch-averaged value
-            patch_ids = bc.IDs_range
-            sum_val = 0.0
-            count = 0
-            for fID in patch_ids
-                cID = boundary_cellsID[fID]
-                sum_val += field[cID]
-                count += 1
-            end
-            avg_val = count > 0 ? sum_val / count : 0.0
-            return linearize_boundary(bc, avg_val)
+    acc = zero(field[boundary_cellsID[first(patch_ids)]])
+    for fID in patch_ids
+        cID = boundary_cellsID[fID]
+        acc += field[cID]
+    end
+    return acc / nfaces
+end
+
+"""
+    linearize_boundary(bc::NonLinearRobin, phi0; derivative=nothing)
+
+Lower a nonlinear flux condition `grad(phi).n = f(phi)` to an affine Robin
+condition around `phi0`.
+"""
+function linearize_boundary(bc::NonLinearRobin, phi0; derivative=nothing)
+    map = bc.value.map
+    f0 = _nonlinear_robin_value(map, phi0)
+    df0 = _nonlinear_robin_derivative(map, phi0, derivative)
+    F = typeof(phi0)
+
+    # grad(phi).n = f(phi0) + f'(phi0)(phi - phi0)
+    # => grad(phi).n - f'(phi0)phi = f(phi0) - f'(phi0)phi0
+    return Robin(
+        bc.ID,
+        RobinValue(a=F(-df0), b=one(F), value=F(f0 - df0 * phi0)),
+        bc.IDs_range,
+    )
+end
+
+"""
+    update_nonlinear_robin(field_bcs, field; derivative=nothing)
+
+Return boundary conditions where every `NonLinearRobin` has been lowered to a
+standard `Robin` condition using a patch-average value of `field`.
+"""
+function update_nonlinear_robin(field_bcs::Tuple, field; derivative=nothing)
+    any(bc -> bc isa NonLinearRobin, field_bcs) || return field_bcs
+    _assert_cpu_nonlinear_robin(field)
+
+    return map(field_bcs) do bc
+        if bc isa NonLinearRobin
+            phi0 = _patch_average(bc, field)
+            linearize_boundary(bc, phi0; derivative=derivative)
         else
-            return bc
+            bc
         end
     end
-    return Tuple(new_bcs)
 end
+
+function update_nonlinear_robin(field_bcs::AbstractVector, field; derivative=nothing)
+    return update_nonlinear_robin(Tuple(field_bcs), field; derivative=derivative)
+end
+
+function update_nonlinear_robin(BCs::NamedTuple, field; derivative=nothing)
+    names = propertynames(BCs)
+    updated = map(values(BCs)) do field_bcs
+        field_bcs isa Tuple || field_bcs isa AbstractVector ?
+            update_nonlinear_robin(field_bcs, field; derivative=derivative) :
+            field_bcs
+    end
+    return NamedTuple{names}(updated)
+end
+
+"""
+    update_nonlinear_robin!(field_bcs, field; derivative=nothing)
+
+In-place convenience wrapper for mutable boundary vectors. Immutable boundary
+containers such as tuples and named tuples are returned as updated copies.
+"""
+function update_nonlinear_robin!(field_bcs::AbstractVector, field; derivative=nothing)
+    updated = update_nonlinear_robin(field_bcs, field; derivative=derivative)
+    for i in eachindex(field_bcs)
+        field_bcs[i] = updated[i]
+    end
+    return field_bcs
+end
+
+update_nonlinear_robin!(field_bcs::Tuple, field; derivative=nothing) =
+    update_nonlinear_robin(field_bcs, field; derivative=derivative)
+update_nonlinear_robin!(BCs::NamedTuple, field; derivative=nothing) =
+    update_nonlinear_robin(BCs, field; derivative=derivative)

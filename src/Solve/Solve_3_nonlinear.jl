@@ -93,14 +93,18 @@ ModelFramework.NonLinearSi(map::NonlinearMap, phi) =
 # ---------------------------------------------------------------------------
 # linearize_bcs: replace NonLinearRobin BCs with their Newton-linearised Robin
 # ---------------------------------------------------------------------------
-function linearize_bcs(BCs, phi::ScalarField)
-    return Discretise.update_nonlinear_robin(BCs, phi)
+function linearize_bcs(BCs, phi::ScalarField; ad_backend=:forwarddiff)
+    derivative = (map, value) -> _map_derivative(map, value, ad_backend)
+    return Discretise.update_nonlinear_robin(BCs, phi; derivative=derivative)
 end
 
-function linearize_bcs(BCs::NamedTuple, phi::ScalarField)
+function linearize_bcs(BCs::NamedTuple, phi::ScalarField; ad_backend=:forwarddiff)
+    derivative = (map, value) -> _map_derivative(map, value, ad_backend)
     names = propertynames(BCs)
     updated = map(values(BCs)) do field_bcs
-        field_bcs isa Tuple ? Discretise.update_nonlinear_robin(field_bcs, phi) : field_bcs
+        field_bcs isa Tuple ?
+            Discretise.update_nonlinear_robin(field_bcs, phi; derivative=derivative) :
+            field_bcs
     end
     return NamedTuple{names}(updated)
 end
@@ -165,7 +169,7 @@ function linearize_physics(BCs, model_eqn::ModelEquation, other_fields=[]; susp=
     var_indices = Dict(objectid(v.values) => k for (k, v) in enumerate(all_vars))
 
     # 1. Linearise BCs (NonLinearRobin → Robin)
-    new_bcs = linearize_bcs(BCs, phi)
+    new_bcs = linearize_bcs(BCs, phi; ad_backend=ad_backend)
 
     # 2. Linearise model terms
     extra_sources = []

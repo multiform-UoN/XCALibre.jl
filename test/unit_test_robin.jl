@@ -131,3 +131,46 @@ expected_AP = (1.0 * area * 1.0) / (1.0 * delta + 1.0)
 # So A[1,1] = 1 (right) + 1 (top) + expected_AP
 expected_A11 = 1.0 + 1.0 + expected_AP
 @test T_eqn_mixed.equation.A.parent[1,1] ≈ expected_A11
+
+# Case 3: NonLinearRobin lowering uses an explicit derivative when provided.
+C_nl = ScalarField(mesh_dev)
+initialise!(C_nl, 2.0)
+f_wall(c) = c^2
+df_wall(c) = 2c
+
+BCs_nonlinear = assign(
+    region = mesh_dev,
+    (
+        T = [
+            NonLinearRobin(:left_wall, f_wall, df_wall),
+            Zerogradient(:right_wall),
+            Zerogradient(:bottom_wall),
+            Zerogradient(:upper_wall)
+        ],
+    )
+)
+
+updated_bcs = update_nonlinear_robin(BCs_nonlinear.T, C_nl)
+@test updated_bcs[1] isa Robin
+@test updated_bcs[1].value.a ≈ -4.0
+@test updated_bcs[1].value.b ≈ 1.0
+@test updated_bcs[1].value.value ≈ -4.0
+
+# Direct boundary-module lowering should fail fast without an analytic derivative.
+BCs_no_derivative = assign(
+    region = mesh_dev,
+    (
+        T = [
+            NonLinearRobin(:left_wall, f_wall),
+            Zerogradient(:right_wall),
+            Zerogradient(:bottom_wall),
+            Zerogradient(:upper_wall)
+        ],
+    )
+)
+@test_throws ErrorException update_nonlinear_robin(BCs_no_derivative.T, C_nl)
+
+# The solver-level CPU Newton path can still supply its selected AD backend.
+updated_bcs_ad = linearize_bcs(BCs_no_derivative.T, C_nl; ad_backend=:forwarddiff)
+@test updated_bcs_ad[1] isa Robin
+@test updated_bcs_ad[1].value.a ≈ -4.0
