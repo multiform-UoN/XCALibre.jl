@@ -65,11 +65,11 @@ end
     0.0, 0.0
 end
 
-@define_boundary Robin Time{SteadyState} begin
+@define_boundary Robin TimeTerm{SteadyState} begin
     0.0, 0.0
 end
 
-@define_boundary Robin Time{Euler} begin
+@define_boundary Robin TimeTerm{Euler} begin
     0.0, 0.0
 end
 

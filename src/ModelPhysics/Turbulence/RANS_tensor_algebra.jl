@@ -17,10 +17,8 @@ end
     @inbounds S[i] = ∇1[i]⋅∇2[i]
 end
 
-double_inner_product!(
-    s, t0::AbstractTensorField, t2) =
-begin
-    for i ∈ eachindex(s)
+double_inner_product!(s, t0::AbstractTensorField, t2, config) = begin
+    xcal_foreach(s, config) do i
         t1 = 2*t0[i] - (2/3)*t0[i]*I
         s[i] = tr(t1 * t2[i])
     end
