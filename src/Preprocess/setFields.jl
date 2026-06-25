@@ -152,24 +152,16 @@ function setField_Expression!(;
     value_false::Union{F,Nothing} = nothing,
 ) where {F <: AbstractFloat}
 
-    cells_in_region = Int[]
-    cells_outside   = Int[]
-
+    count = 0
     for (id, cell) in enumerate(mesh.cells)
         c = cell.centre
         if condition(c[1], c[2], c[3])
-            push!(cells_in_region, id)
-        else
-            push!(cells_outside, id)
+            field[id] = value_true
+            count += 1
+        elseif value_false !== nothing
+            field[id] = value_false
         end
     end
 
-    if !isempty(cells_in_region)
-        field.values[cells_in_region] .= value_true
-    end
-    if value_false !== nothing && !isempty(cells_outside)
-        field.values[cells_outside] .= value_false
-    end
-
-    return length(cells_in_region)
+    return count
 end

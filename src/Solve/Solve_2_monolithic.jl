@@ -197,7 +197,7 @@ function extract_global_vector(sys::MonolithicSystem)
     x = zeros(TF, N)
     for (i, phi) in enumerate(phi_list)
         row_off = (i - 1) * n_cells
-        x[row_off+1:row_off+n_cells] .= phi.values
+        x[row_off+1:row_off+n_cells] .= phi.values  # bulk copy into raw LA vector
     end
     return x
 end
@@ -206,7 +206,7 @@ function update_fields!(sys::MonolithicSystem, x)
     (; phi_list, n_cells) = sys
     for (i, phi) in enumerate(phi_list)
         row_off = (i - 1) * n_cells
-        phi.values .+= x[row_off+1:row_off+n_cells]
+        phi.values .+= x[row_off+1:row_off+n_cells]  # bulk increment from raw LA vector
     end
 end
 
@@ -214,7 +214,7 @@ function set_fields!(sys::MonolithicSystem, x)
     (; phi_list, n_cells) = sys
     for (i, phi) in enumerate(phi_list)
         row_off = (i - 1) * n_cells
-        phi.values .= x[row_off+1:row_off+n_cells]
+        phi.values .= x[row_off+1:row_off+n_cells]  # bulk copy from raw LA vector
     end
 end
 

@@ -179,20 +179,19 @@ function linearize_physics(BCs, model_eqn::ModelEquation, other_fields=[]; susp=
             map = term.map
             inner_op = term.op
             term_phi = inner_op.phi
-            vals = term_phi.values
             mesh = term_phi.mesh
             _assert_cpu_linearization(mesh)
 
             jacobian = ScalarField(mesh)
             offset = ScalarField(mesh)
             reference = ScalarField(mesh)
-            for i in eachindex(vals)
-                v0 = vals[i]
+            for i in eachindex(term_phi)
+                v0 = term_phi[i]
                 r0 = _map_value(map, v0)
                 dv = _map_derivative(map, v0, ad_backend)
-                reference.values[i] = r0
-                jacobian.values[i] = dv
-                offset.values[i] = r0 - dv * v0
+                reference[i] = r0
+                jacobian[i] = dv
+                offset[i] = r0 - dv * v0
             end
             return AffineOperator(inner_op, jacobian, offset, reference, map)
 
@@ -201,25 +200,23 @@ function linearize_physics(BCs, model_eqn::ModelEquation, other_fields=[]; susp=
             map = term.type.func
             term_phi = term.phi
             mesh = term_phi.mesh
-            vals = term_phi.values
             _assert_cpu_linearization(mesh)
 
             k_imp = ScalarField(mesh)
             s_exp = ScalarField(mesh)
 
-            for i in eachindex(vals)
-                v0 = vals[i]
+            for i in eachindex(term_phi)
+                v0 = term_phi[i]
                 r0 = _map_value(map, v0)
                 dv = _map_derivative(map, v0, ad_backend)
                 term_sign = term.sign
 
-
                 if !susp || term_sign * dv > 0
-                    k_imp.values[i] = dv
-                    s_exp.values[i] = -term_sign * (r0 - dv * v0)
+                    k_imp[i] = dv
+                    s_exp[i] = -term_sign * (r0 - dv * v0)
                 else
-                    k_imp.values[i] = 0.0
-                    s_exp.values[i] = -term_sign * r0
+                    k_imp[i] = zero(dv)
+                    s_exp[i] = -term_sign * r0
                 end
             end
             push!(extra_sources, Source(s_exp))

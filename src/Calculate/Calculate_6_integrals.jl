@@ -17,10 +17,9 @@ Divide by `total_volume(mesh)` for the volume average.
 function volume_integral(phi::ScalarField)
     mesh = phi.mesh
     cells = mesh.cells
-    vals = phi.values
-    s = zero(eltype(vals))
+    s = zero(eltype(phi))
     for cID in eachindex(cells)
-        s += vals[cID] * cells[cID].volume
+        s += phi[cID] * cells[cID].volume
     end
     return s
 end
@@ -34,16 +33,14 @@ Returns a 3-vector `[∫ux dV, ∫uy dV, ∫uz dV]`.
 function volume_integral(phi::VectorField)
     mesh = phi.mesh
     cells = mesh.cells
-    xv = phi.x.values
-    yv = phi.y.values
-    zv = phi.z.values
-    Tf = eltype(xv)
+    Tf = eltype(phi.x)
     sx, sy, sz = zero(Tf), zero(Tf), zero(Tf)
     for cID in eachindex(cells)
         vol = cells[cID].volume
-        sx += xv[cID] * vol
-        sy += yv[cID] * vol
-        sz += zv[cID] * vol
+        v = phi[cID]
+        sx += v[1] * vol
+        sy += v[2] * vol
+        sz += v[3] * vol
     end
     return [sx, sy, sz]
 end
@@ -83,12 +80,11 @@ where the integral is approximated as a sum over cell centroids:
 function weighted_volume_integral(phi::ScalarField, weight_func)
     mesh = phi.mesh
     cells = mesh.cells
-    vals = phi.values
-    s = zero(eltype(vals))
+    s = zero(eltype(phi))
     for cID in eachindex(cells)
         c = cells[cID].centre
         w = weight_func(c[1], c[2], c[3])
-        s += vals[cID] * w * cells[cID].volume
+        s += phi[cID] * w * cells[cID].volume
     end
     return s
 end
@@ -102,18 +98,16 @@ Returns `[∫ux*w dV, ∫uy*w dV, ∫uz*w dV]`.
 function weighted_volume_integral(phi::VectorField, weight_func)
     mesh = phi.mesh
     cells = mesh.cells
-    xv = phi.x.values
-    yv = phi.y.values
-    zv = phi.z.values
-    Tf = eltype(xv)
+    Tf = eltype(phi.x)
     sx, sy, sz = zero(Tf), zero(Tf), zero(Tf)
     for cID in eachindex(cells)
         c = cells[cID].centre
         w = weight_func(c[1], c[2], c[3])
         vol = cells[cID].volume
-        sx += xv[cID] * w * vol
-        sy += yv[cID] * w * vol
-        sz += zv[cID] * w * vol
+        v = phi[cID]
+        sx += v[1] * w * vol
+        sy += v[2] * w * vol
+        sz += v[3] * w * vol
     end
     return [sx, sy, sz]
 end

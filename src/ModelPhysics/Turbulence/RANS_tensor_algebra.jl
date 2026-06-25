@@ -14,25 +14,15 @@ end
 
 @kernel function _inner_product!(S::F, ∇1::Grad, ∇2::Grad) where F<:ScalarField
     i = @index(Global)
-    @uniform values = S.values
-    # for i ∈ eachindex(S.values)
-        values[i] = ∇1[i]⋅∇2[i]
-    # end
+    @inbounds S[i] = ∇1[i]⋅∇2[i]
 end
 
 double_inner_product!(
-    s, t0::AbstractTensorField, t2) = 
+    s, t0::AbstractTensorField, t2) =
 begin
-    sum = 0.0
     for i ∈ eachindex(s)
-        t1 = 2.0.*t0[i] .- (2/3)*t0[i]*I
-        sum = 0.0
-        for j ∈ 1:3
-            for k ∈ 1:3
-                sum +=   t1[j,k]*t2[i][k,j]
-            end
-        end
-        s[i] = sum
+        t1 = 2*t0[i] - (2/3)*t0[i]*I
+        s[i] = tr(t1 * t2[i])
     end
 end
 
@@ -50,19 +40,7 @@ end
 # @kernel function _magnitude!(magS::ScalarField, S::AbstractVectorField)
 @kernel function _magnitude!(magS::AbstractScalarField, S)
     i = @index(Global)
-    @uniform values = magS.values
-    
-    @inbounds values[i] = norm(S[i])
-    # sum = 0.0
-    # for i ∈ eachindex(magS.values)
-    #     sum = 0.0
-    #     for j ∈ 1:3
-    #         for k ∈ 1:3
-    #             sum +=   S[i][j,k]*S[i][k,j]
-    #         end
-    #     end
-    #     magS.values[i] =   sqrt(sum)
-    # end
+    @inbounds magS[i] = norm(S[i])
 end
 
 function magnitude2!(
@@ -82,19 +60,9 @@ end
     magS::ScalarField, S::AbstractTensorField, scale_factor
     )
     i = @index(Global)
-
-    @uniform values = magS.values
-
     @inbounds begin
-        sum = zero(eltype(values))
         Sjk = S[i]
-        for j ∈ 1:3
-            for k ∈ 1:3
-                sum +=   Sjk[j,k]*Sjk[j,k]
-                # sum +=   S(i)[j,k]*S(i)[k,j]
-            end
-        end
-        magS.values[i] = sum*scale_factor
+        magS[i] = dot(Sjk, Sjk) * scale_factor
     end
 end
 
@@ -102,19 +70,9 @@ end
     magS::AbstractScalarField, S::AbstractVectorField, scale_factor
     )
     i = @index(Global)
-
-    @uniform values = magS.values
-
     @inbounds begin
-        # sum = 0.0
         Si = S[i]
-        # for j ∈ 1:3
-        #     for k ∈ 1:3
-                # sum +=   Sjk[j,k]*Sjk[j,k]
-                res =   Si⋅Si
-        #     end
-        # end
-        magS.values[i] = res*scale_factor
+        magS[i] = (Si⋅Si) * scale_factor
     end
 end
 
@@ -123,8 +81,9 @@ function square!(psi2, psi, config; scale_factor=1.0)
     (; backend, workgroup) = hardware
 
     scale = eltype(psi2)(scale_factor)
-    kernel! = _square!(backend, workgroup)
-    kernel!(psi2, psi, scale, ndrange = length(psi2))
+    ndrange = length(psi2)
+    kernel! = _square!(_setup(backend, workgroup, ndrange)...)
+    kernel!(psi2, psi, scale)
     nothing
 end
 

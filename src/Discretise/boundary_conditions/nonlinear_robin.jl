@@ -69,8 +69,7 @@ function update_nonlinear_robin(field_bcs, field)
 
     mesh = field.mesh
     boundary_cellsID = mesh.boundary_cellsID
-    vals = field.values
-    
+
     new_bcs = map(field_bcs) do bc
         if typeof(bc) <: NonLinearRobin
             # Linearize using patch-averaged value
@@ -79,7 +78,7 @@ function update_nonlinear_robin(field_bcs, field)
             count = 0
             for fID in patch_ids
                 cID = boundary_cellsID[fID]
-                sum_val += vals[cID]
+                sum_val += field[cID]
                 count += 1
             end
             avg_val = count > 0 ? sum_val / count : 0.0
