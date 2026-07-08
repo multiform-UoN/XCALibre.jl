@@ -151,6 +151,12 @@ Base.setindex!(v::AbstractVectorField, vec::SVector{3, T}, i::Integer) where T= 
     y[i] = vec[2]
     z[i] = vec[3]
 end
+Base.setindex!(v::AbstractVectorField, vec::Union{AbstractVector, Tuple}, i::Integer) = begin
+    (; x, y, z) = v
+    x[i] = vec[1]
+    y[i] = vec[2]
+    z[i] = vec[3]
+end
 Base.length(v::AbstractVectorField) = length(v.x)
 Base.eachindex(v::AbstractVectorField) = eachindex(v.x)
 Base.eltype(v::AbstractVectorField) = eltype(v.x)
@@ -446,5 +452,4 @@ end
         c = cells[i].centre
         v[i] = func(c[1], c[2], c[3]) # func must return an SVector
     end
-end
 end
