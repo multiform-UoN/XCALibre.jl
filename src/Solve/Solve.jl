@@ -31,7 +31,8 @@ include("Preconditioners/Preconditioners.jl")
 include("Smoothers/Smoothers.jl")
 include("Solve_1_Krylov_solvers.jl")
 include("Solve_1_api.jl")
-include("Solve_3_nonlinear.jl")
+include("AMG/AMG.jl")
 include("Solve_2_monolithic.jl")
+include("Solve_3_nonlinear.jl")
 
 end

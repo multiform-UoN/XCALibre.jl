@@ -66,7 +66,7 @@ This function is used to provide solver settings that will be used internally in
 - `relax`: specifies the relaxation factor to be used e.g. set to 1 for no relaxation
 - `smoother`: specifies smoothing method to be applied before discretisation. `JacobiSmoother`: is currently the only choice (defaults to `nothing`)
 - `limit`: used in some solvers to bound the solution within these limits e.g. (min, max). It defaults to `nothing`
-- `itmax`: maximum number of iterations in a single solver pass (defaults to 1000)
+- `itmax`: maximum number of iterations in a single solver pass (defaults to 1000, or 200 for `AMG`)
 - `atol`: absolute tolerance for the solver (default to eps(FloatType)^0.9)
 - `rtol`: set relative tolerance for the solver (defaults to 1e-1)
 - `float_type`: specifies the floating point type to be used by the solver. It is also used to estimate the absolute tolerance for the solver (defaults to `Float64`)
@@ -79,7 +79,7 @@ SolverSetup(;
         convergence,
         relax,
         limit=nothing,
-        itmax::I=1000,
+        itmax::I=(solver isa AMG ? 200 : 1000),
         atol=(eps(float_type))^0.9,
         rtol=1e-1 |> float_type
         ) where{S1,S2,PT,I} =
@@ -400,8 +400,8 @@ function solve_system!(phiEqn::ModelEquation, setup, result, component, config)
     apply_smoother!(setup.smoother, values, opA, b, hardware)
 
     krylov_solve!(
-        solver, opA, b, values;
-        M=P, itmax=itmax, atol=atol, rtol=rtol, ldiv=is_ldiv(precon)
+        solver, opA, b, values; 
+        M=P, itmax=itmax, atol=atol, rtol=rtol, ldiv=is_ldiv(precon), history=false
         )
 
     # Perform explicit step for Crank-Nicholson. Otherwise simply update field with solution
@@ -416,10 +416,10 @@ function solve_system!(phiEqn::ModelEquation, setup, result, component, config)
     kernel!(values, x)
     KernelAbstractions.synchronize(backend)
 
-    Krylov.iteration_count(solver) == itmax && @warn "Maximum number of iterations reached!"
+    iterations = Krylov.iteration_count(solver)
+    iterations == itmax && @warn "Maximum number of iterations reached!"
 
-    # println(statistics(solver).niter)
-    res = solve_residual(phiEqn, component, config)
+    res = residual(phiEqn, component, config)
     return res
 end
 
@@ -664,6 +664,46 @@ function solve_residual(eqn, component, config)
     denominator = ifelse(normb > eps(normb), normb, one(normb))
     Residual = sqrt(sum(R)) / denominator
     return Residual
+end
+
+function residual(eqn, component, config)
+    (; A, R, Fx) = eqn.equation
+    b = _b(eqn, component)
+    values = get_values(get_phi(eqn), component)
+    (; backend, workgroup) = config.hardware
+
+    rowptr = _rowptr(A)
+    colval = _colval(A)
+    nzval = _nzval(A)
+    ndrange = length(values)
+    kernel! = _scaled_residual!(_setup(backend, workgroup, ndrange)...)
+    kernel!(R, Fx, rowptr, colval, nzval, values, b)
+
+    denominator = sum(Fx)
+    denominator = ifelse(denominator > eps(denominator), denominator, one(denominator))
+    Residual = sum(R) / denominator
+    return Residual
+end
+
+@kernel function _scaled_residual!(R, Fx, @Const(rowptr), @Const(colval), @Const(nzval), @Const(values), @Const(b))
+    i = @index(Global)
+    Ax = zero(eltype(R))
+    Dx = zero(eltype(R))
+    xi = values[i]
+
+    @inbounds for nzi ∈ rowptr[i]:(rowptr[i + 1] - 1)
+        Aij = nzval[nzi]
+        j = colval[nzi]
+        Ax += Aij * values[j]
+        if j == i
+            Dx = Aij * xi
+        end
+    end
+
+    @inbounds begin
+        R[i] = abs(b[i] - Ax)
+        Fx[i] = abs(Dx)
+    end
 end
 
 function make_symmetric!(eqn, config)

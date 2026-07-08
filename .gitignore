@@ -7,6 +7,7 @@ data/fields.jld2
 unv_sample_meshes/*
 constant/
 /[0-9]*/
+dev/
 
 *.csv
 *.unv
@@ -18,6 +19,7 @@ constant/
 !NIST_*.csv
 *.txt
 CLAUDE.md
+AGENTS.md
 .claudeignore
 *.jld2
 *.log
@@ -26,3 +28,4 @@ CLAUDE.md
 .agents
 .claude
 .vscode
+dev/
