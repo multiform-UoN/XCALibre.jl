@@ -129,6 +129,64 @@ Physics(
 )
 ```
 
+### Viscosity models
+
+For the compressible fluid types (`WeaklyCompressible` and `Compressible`), the `nu` keyword argument accepted by the `Fluid` constructor can be given either as a plain number or as a `Viscosity` model. This allows viscosity to be treated as fixed, or modelled as a function of the local temperature field. The viscosity models currently available, `ConstantViscosity` and `SutherlandViscosity`, are subtypes of `AbstractViscosityModel`:
+
+- `ConstantViscosity` - kinematic viscosity remains fixed at the value provided by the user (this is also what happens implicitly when `nu` is given as a plain number)
+- `SutherlandViscosity` - kinematic viscosity is recalculated every iteration from the local cell temperature `T` using Sutherland's law
+
+Below are three equivalent-in-spirit ways of specifying `nu`, illustrating each option.
+
+`nu` given as a `Float64` (simplest option, equivalent to a constant viscosity model)
+```julia
+Physics(
+    time = Steady(),
+    fluid = Fluid{WeaklyCompressible}(nu=1e-5, cp=1005.0, gamma=1.4, Pr=0.7),
+    turbulence = RANS{Laminar}(),
+    energy = Energy{SensibleEnthalpy}(Tref=300),
+    ...
+)
+```
+
+`nu` given explicitly as a `ConstantViscosity` model (using the `Viscosity` wrapper type)
+```julia
+Physics(
+    time = Steady(),
+    fluid = Fluid{WeaklyCompressible}(
+        nu = Viscosity{ConstantViscosity}(nu=1e-5),
+        cp = 1005.0, gamma = 1.4, Pr = 0.7
+        ),
+    turbulence = RANS{Laminar}(),
+    energy = Energy{SensibleEnthalpy}(Tref=300),
+    ...
+)
+```
+
+`nu` given as a `SutherlandViscosity` model, where viscosity is updated every iteration as a function of temperature
+```julia
+Physics(
+    time = Steady(),
+    fluid = Fluid{WeaklyCompressible}(
+        nu = Viscosity{SutherlandViscosity}(mu_ref=1.8e-5, T_ref=288.15, S=110.4),
+        cp = 1005.0, gamma = 1.4, Pr = 0.7
+        ),
+    turbulence = RANS{Laminar}(),
+    energy = Energy{SensibleEnthalpy}(Tref=300),
+    ...
+)
+```
+
+where the `SutherlandViscosity` coefficients are:
+
+- `mu_ref` - reference dynamic viscosity
+- `T_ref` - reference temperature
+- `S` - Sutherland constant
+
+!!! note
+
+    `SutherlandViscosity` depends on the local temperature field, therefore an active energy model (e.g. `Energy{SensibleEnthalpy}`) must be used alongside it.
+
 ## Turbulence models
 ---
 

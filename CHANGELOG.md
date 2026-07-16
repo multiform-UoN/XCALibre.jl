@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Fixed mixed-precision mesh conversion to preserve user-selected integer and floating-point types [#125](@ref)
 * Fixed pressure boundary mass-flux correction [#125](@ref)
 * Fixed turbulent effective viscosity updates so turbulence models include eddy viscosity again, reverting a regression introduced in [#120](@ref) [#125](@ref)
+* Add missing constructor for LES{Laminar} supporing qDNS simulations [#144](@ref)
   
 ### Changed
 * Improved stability of `Periodic` boundaries by making the implementation fully implicit [#96](@ref)
