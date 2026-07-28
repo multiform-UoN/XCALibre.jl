@@ -197,6 +197,11 @@ return_quote(x, t) = :(nothing)
     end
 end
 
+# Strip scalar wrappers used by operator algebra before classifying a source as
+# scalar or vector. Keeping this at the type level preserves generated GPU code.
+_unscaled_flux_type(::Type{ScaledFlux{F,V}}) where {F,V} = _unscaled_flux_type(F)
+_unscaled_flux_type(::Type{F}) where {F} = F
+
 # Scheme source generated function definition
 @generated function _scheme_source!(model::Model{TN,SN,T,S}, terms::TERMS, cell::Cell{F}, cID, cIndex, prev, runtime, rho_prev) where {TN,SN,T,S,TERMS,F}
     # Allocate expression array to store scheme_source function
@@ -206,7 +211,7 @@ end
     # When SN>0 use source field type; when SN==0 fall back to first term's phi type.
     # (S = Tuple{} when no sources, so S.parameters[1] would throw for SN==0.)
     phi_field_type = if SN > 0
-        S.parameters[1].parameters[1]
+        _unscaled_flux_type(S.parameters[1].parameters[1])
     elseif TN > 0
         T.parameters[1].parameters[2]  # Operator{F, P, I, Type} → P is the phi field
     else
@@ -267,7 +272,7 @@ end
 
     # Same scalar/vector detection as _scheme_source!
     phi_field_type = if SN > 0
-        S.parameters[1].parameters[1]
+        _unscaled_flux_type(S.parameters[1].parameters[1])
     elseif TN > 0
         T.parameters[1].parameters[2]
     else
@@ -292,9 +297,10 @@ end
         for s in 1:SN
             expression_call_sources = quote
                 (; field, sign) = sources[$s]
-                Bx += F(sign*field.x[cID]*volume)
-                By += F(sign*field.y[cID]*volume)
-                Bz += F(sign*field.z[cID]*volume)
+                value = field[cID]
+                Bx += F(sign*value[1]*volume)
+                By += F(sign*value[2]*volume)
+                Bz += F(sign*value[3]*volume)
             end
             push!(out.args, expression_call_sources)
         end

@@ -66,18 +66,14 @@ end
     0.0, 0.0
 end
 
+# Bounded = upwind boundary with -Sp(div phi): subtract ap from the diagonal
 @define_boundary Wall Divergence{BoundedUpwind} VectorField begin
-    flux = term.flux[fID]
-    ap = term.sign*(flux)
-    0.0, 0.0
+    ap = term.sign*(term.flux[fID])
+    -ap, 0.0
 end
 
 @define_boundary Wall Divergence{BoundedUpwind} ScalarField begin
-    ap = term.sign*(term.flux[fID])
-    z = zero(ap)
-    ac = max(-ap, z)
-    an = -max(-ap, z)
-    ac, -an*bc.value
+    0.0, 0.0
 end
 
 # Scalar implementations for divergence operator

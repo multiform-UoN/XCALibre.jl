@@ -3,6 +3,7 @@ using LinearAlgebra
 using Accessors
 using Printf
 using Statistics
+using SparseArrays
 using SparseMatricesCSR
 using Krylov
 
@@ -80,7 +81,7 @@ end
 @info "Building monolithic connectivity..."
 I_mono, J_mono = get_monolithic_connectivity(mesh, n_vars)
 V_mono = zeros(length(I_mono))
-A_mono = SparseMatrixCSR(I_mono, J_mono, V_mono, n_vars*n_cells, n_vars*n_cells)
+A_mono = SparseMatrixCSR(sparse(I_mono, J_mono, V_mono, n_vars*n_cells, n_vars*n_cells))
 b_mono = zeros(n_vars * n_cells)
 
 # 5. Monolithic Assembly Function
@@ -106,7 +107,8 @@ function assemble_monolithic!(A, b, mesh, C1, C2, D, k12, k21, BCs)
         # Block 11 (C1 Self) & Block 22 (C2 Self)
         # Laplacian contributions
         for fi in cell.faces_range
-            face = mesh.faces[fi]
+            fID = mesh.cell_faces[fi]
+            face = mesh.faces[fID]
             nb = mesh.cell_neighbours[fi]
             coeff = D * face.area / face.delta
 
@@ -144,7 +146,7 @@ assemble_monolithic!(A_mono, b_mono, mesh, C1, C2, D, k12, k21, BCs)
 
 # 6. Solve with standard Krylov
 @info "Solving monolithic system..."
-solver = Bicgstab(n_vars*n_cells)
+solver = Bicgstab()
 # x_mono, stats = solve(A_mono, b_mono, solver)
 
 @info "Monolithic Prototype Completed!"

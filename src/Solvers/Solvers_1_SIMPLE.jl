@@ -473,11 +473,23 @@ end
 
 ### Correct mass flux at pressure boundaries
 
+# Locate the Laplacian term index in an equation's term tuple at compile time. The
+# boundary mass-flux correction needs the Laplacian face flux (rhorDf); finding it by
+# type keeps correct_mass_flux! independent of term ordering (e.g. the transient p_eqn
+# has the Time term first).
+@generated function laplacian_term_index(terms)
+    for (i, Op) ∈ enumerate(terms.parameters)
+        Op <: Operator && Op.parameters[4] <: Laplacian && return :($i)
+    end
+    error("correct_mass_flux!: no Laplacian term found in the pressure equation")
+end
+
 function correct_boundary_mass_flux!(mdotf, p_eqn, BCs, time, config)
     (; hardware) = config
     (; backend, workgroup) = hardware
 
-    pterm = p_eqn.model.terms[1]
+    terms = p_eqn.model.terms
+    pterm = terms[laplacian_term_index(terms)]
     p = pterm.phi
     pflux = pterm.flux
     psign = pterm.sign

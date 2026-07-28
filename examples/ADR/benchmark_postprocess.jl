@@ -9,7 +9,7 @@ using Statistics
 # ==============================================================================
 # This script:
 # 1. Benchmarks XCALibre's Scalar Transport on a standard OpenFOAM mesh (pitzDaily).
-# 2. Demonstrates the new volume_average and sample_at_point tools.
+# 2. Demonstrates volume averaging and point sampling with a Probe.
 # 3. Compares timing results (Time per iteration).
 
 # 1. Setup Mesh (OF pitzDaily - approx 12k cells)
@@ -93,7 +93,8 @@ vol_avg = volume_average(C)
 # 5.2 Point Sampling
 # Sample at the center of the pitzDaily expansion
 sample_pt = [0.05, 0.0, 0.0]
-val_at_pt = sample_at_point(C, sample_pt)
+point_probe = Probe(C, mesh; location=sample_pt, name="ADR benchmark point")
+val_at_pt = C.values[point_probe.index]
 @printf("C value at point %s: %.6f\n", sample_pt, val_at_pt)
 
 # 5.3 Boundary Average

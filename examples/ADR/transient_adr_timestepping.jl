@@ -96,7 +96,8 @@ L = (
     - Laplacian{Linear}(D)
     + Si(k)
     == Source(0.0)
-) → BCs.C → solvers_cfg.C
+) → BCs.C
+L = L → solvers_cfg.C
 
 # =============================================================================
 # STEP 2a — EXPLICIT EULER

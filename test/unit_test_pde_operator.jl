@@ -35,4 +35,29 @@ using StaticArrays
     @test get_phi(eqn) === phi
     @test get_bcs(eqn) == BCs
     @test eqn.setup === setup
+
+    # 5. Scaling keeps source-field classification valid during generated
+    # discretisation, and a composed time term is lowered first to satisfy the
+    # legacy time-coefficient convention.
+    all_BCs = [
+        Dirichlet(:inlet, 1.0),
+        Dirichlet(:outlet, 0.0),
+        Zerogradient(:bottom),
+        Zerogradient(:top),
+    ]
+    L_scaled = ((0.5 * L) → all_BCs) → setup
+    scaled_eqn = L_scaled(phi)
+    config = Configuration(
+        solvers=(phi=setup,),
+        schemes=(phi=Schemes(laplacian=Linear),),
+        runtime=Runtime(iterations=1, write_interval=-1, time_step=1.0),
+        hardware=Hardware(backend=CPU(), workgroup=64),
+        boundaries=(phi=Tuple(all_BCs),),
+    )
+    r = zeros(length(phi.values))
+    residual!(r, scaled_eqn, config)
+    @test all(isfinite, r)
+
+    L_transient = L_scaled + Time{Euler}(ConstantScalar(1.0))
+    @test first(L_transient.templates).type isa Time{Euler}
 end

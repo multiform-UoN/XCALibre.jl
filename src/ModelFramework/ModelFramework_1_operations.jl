@@ -10,6 +10,8 @@ const TemplateTerm = Union{OperatorTemplate,NonlinearOperatorTemplate,Time}
 Base.:+(a::TemplateTerm, b::TemplateTerm) = PDEOperator((a, b), (), (), nothing)
 Base.:+(a::TemplateTerm, b::Operator) = PDEOperator((a, b), (), (), nothing)
 Base.:+(a::Operator, b::TemplateTerm) = PDEOperator((a, b), (), (), nothing)
+Base.:+(a::PDEOperator, b::OperatorTemplate{F,S,T,P}) where {F,S,T<:Time,P} =
+    PDEOperator((b, a.templates...), a.sources, a.BCs, a.setup)
 Base.:+(a::PDEOperator, b::TemplateTerm) = PDEOperator((a.templates..., b), a.sources, a.BCs, a.setup)
 Base.:+(a::PDEOperator, b::Src) = PDEOperator(a.templates, (a.sources..., b), a.BCs, a.setup)
 

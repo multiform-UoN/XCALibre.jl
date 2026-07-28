@@ -19,7 +19,7 @@ function update_viscosity_cell!(fluid, energy, config)
 
     ndrange = length(nu)
     kernal! = _update_viscosity_cell!(_setup(backend, workgroup, ndrange)...)
-    kernal!(nu, visc_model, fluid, energy, config)
+    kernal!(nu, visc_model, fluid, energy)
 end
 
 
@@ -65,7 +65,7 @@ initialise_viscosity(nu::Float64, mesh) = begin
     return nu, nuf, ConstantViscosity()
 end
 
-@kernel function _update_viscosity_cell!(nu, visc::ConstantViscosity, fluid, energy, config)
+@kernel function _update_viscosity_cell!(nu, visc::ConstantViscosity, fluid, energy)
 end
 
 function update_viscosity_face!(fluid, visc_model::ConstantViscosity, config)
@@ -96,7 +96,7 @@ initialise_viscosity(nu::Viscosity{SutherlandViscosity}, mesh) = begin
     return nu, nuf, SutherlandViscosity(coeffs)
 end
 
-@kernel function _update_viscosity_cell!(nu, visc_model, fluid, energy, config)
+@kernel function _update_viscosity_cell!(nu, visc_model, fluid, energy)
     i = @index(Global)
 
     @uniform begin

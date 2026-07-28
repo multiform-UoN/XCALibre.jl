@@ -55,11 +55,11 @@ end
 
 # ── 6. Solver Setup ──
 solvers = (
-    u   = SolverSetup(solver=Gmres(100), preconditioner=Jacobi(), convergence=1e-12, relax=1.0),
-    v   = SolverSetup(solver=Gmres(100), preconditioner=Jacobi(), convergence=1e-12, relax=1.0),
-    sxx = SolverSetup(solver=Gmres(100), preconditioner=Jacobi(), convergence=1e-12, relax=1.0),
-    syy = SolverSetup(solver=Gmres(100), preconditioner=Jacobi(), convergence=1e-12, relax=1.0),
-    sxy = SolverSetup(solver=Gmres(100), preconditioner=Jacobi(), convergence=1e-12, relax=1.0),
+    u   = SolverSetup(solver=Gmres(), preconditioner=Jacobi(), convergence=1e-12, relax=1.0, itmax=100),
+    v   = SolverSetup(solver=Gmres(), preconditioner=Jacobi(), convergence=1e-12, relax=1.0, itmax=100),
+    sxx = SolverSetup(solver=Gmres(), preconditioner=Jacobi(), convergence=1e-12, relax=1.0, itmax=100),
+    syy = SolverSetup(solver=Gmres(), preconditioner=Jacobi(), convergence=1e-12, relax=1.0, itmax=100),
+    sxy = SolverSetup(solver=Gmres(), preconditioner=Jacobi(), convergence=1e-12, relax=1.0, itmax=100),
 )
 config = Configuration(solvers=solvers, schemes=(u=Schemes(), v=Schemes(), sxx=Schemes(), syy=Schemes(), sxy=Schemes()),
                        runtime=Runtime(iterations=1, write_interval=-1, time_step=dt), hardware=hardware,
@@ -88,7 +88,13 @@ L_sxy_op = (Si(one_cst) - ScalarGrad{Linear,2}(mu_cst, u) - ScalarGrad{Linear,1}
 L_sxy = (L_sxy_op == Source(0.0))
 
 # ── 8. Assemble and Solve ──
-eqns = [L_u(u), L_v(v), L_sxx(sxx), L_trace(syy), L_sxy(sxy)]
+eqns = [
+    L_u     → ScalarEquation(u, u_bcs),
+    L_v     → ScalarEquation(v, v_bcs),
+    (L_sxx → s_bcs)(sxx),
+    L_trace → ScalarEquation(syy, s_bcs),
+    (L_sxy → s_bcs)(sxy),
+]
 phis = [u, v, sxx, syy, sxy]
 bcs_list = (u_bcs, v_bcs, s_bcs, s_bcs, s_bcs)
 

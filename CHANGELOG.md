@@ -3,21 +3,22 @@
 The format used for this `changelog` is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Notice that until the package reaches version `v1.0.0` minor releases are likely to be `breaking`. Starting from version `v0.3.1` breaking changes will be recorded here. 
 
-## Version [v0.5.3] - 2026-03-05
+## Version [v0.6.0] - 2026-07-17
 
 ### Added
-*  Added optional adaptive time stepping based on Courant number control (`AdaptiveTimeStepping`) [#98](@ref)
+* Added optional adaptive time stepping based on Courant number control (`AdaptiveTimeStepping`) [#98](@ref)
 * Added runtime calculation of Q-criterion [#107]
-*  Added explicit Godunov-type compressible solver (`godunov!`) for supersonic flows using Rusanov (local Lax-Friedrichs) and HLLC flux schemes with first and second order spatial reconstruction (MinMod, VanLeer, Superbee limiters) and adaptive CFL-based time stepping [#112](@ref)
-*  Added experimental incompressible steady MFR solver [#114](@ref)
-*  Added runtime probe extraction [#115](@ref)
-*  Added initialisation logic for new Multiphase solver user-level API [#117](@ref)
-*  New Eulerian Thin Film model solver (2D only) [#120](@ref)
-*  Added `setField_Expression!` to `SetFields` utility to initialise function-based fields. [#124](@ref)
-*  Added VanLeer, upwind, and gradient interpolation schemes for scalar and vector face fields [#124](@ref)
-*  Added multiphase solver (VOF model only) with two supporting functionality tests. [#132](@ref)
-*  Added mixture model inside multiphase solver with supporting unit and functionality tests. [#136](@ref)
-*  Extended `initialise!` API with function-based overloads for `ScalarField` and `VectorField`[#135](@ref)
+* Added explicit Godunov-type compressible solver (`godunov!`) for `Supersonic` flows using Rusanov (local Lax-Friedrichs) and HLLC flux schemes with first and second order spatial reconstruction (MinMod, VanLeer, Superbee limiters) and adaptive CFL-based time stepping. This is the recommended solver for high-speed flows in the range 0.8 < M < 5 approximately [#112](@ref)
+* Added experimental incompressible steady MFR solver [#114](@ref)
+* Added runtime probe extraction [#115](@ref)
+* Added initialisation logic for new Multiphase solver user-level API [#117](@ref)
+* New Eulerian Thin Film model solver (2D only) [#120](@ref)
+* Added `setField_Expression!` to `SetFields` utility to initialise function-based fields. [#124](@ref)
+* Added VanLeer, upwind, and gradient interpolation schemes for scalar and vector face fields [#124](@ref)
+* Added multiphase solver (VOF model only) with two supporting functionality tests. [#132](@ref)
+* Added mixture model inside multiphase solver with supporting unit and functionality tests. [#136](@ref)
+* Extended `initialise!` API with function-based overloads for `ScalarField` and `VectorField`[#135](@ref)
+* Pressure-based compressible solvers have been extended to include `SensibleEnthalpy` and `InternalEnergy` formulations. The solver now correctly handles `Compressible` fluids, activating the transonic correction that allows shock capturing for moderate high-speed applications, typically in the range 0.8 < M < 2 [#145](@ref)
 
 ### Fixed
 * Add implementation of `Periodic` boundaries to handle the implicit source term - fixes operation of models that use `Si` terms [#95](@ref)
@@ -28,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Fixed mixed-precision mesh conversion to preserve user-selected integer and floating-point types [#125](@ref)
 * Fixed pressure boundary mass-flux correction [#125](@ref)
 * Fixed turbulent effective viscosity updates so turbulence models include eddy viscosity again, reverting a regression introduced in [#120](@ref) [#125](@ref)
-* Add missing constructor for LES{Laminar} supporing qDNS simulations [#144](@ref)
+* Add missing constructor for LES{Laminar} supporting qDNS simulations [#144](@ref)
   
 ### Changed
 * Improved stability of `Periodic` boundaries by making the implementation fully implicit [#96](@ref)
@@ -44,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Improved calculation of viscous force using wall eddy viscosity and perpendicular cell-to-face distance [#130](@ref)
 
 ### Breaking
-* No breaking changes
+* Pressure-based compressible solvers (for `WeaklyCompressible` and `Compressible` fluids) have been extended to work with `SensibleEnthalpy` and `InternalEnergy` formulations. Thus, to capture this change, the energy field has been renamed `he` instead of `h` [#145](@ref)
 
 ### Deprecated
 * No functions deprecated

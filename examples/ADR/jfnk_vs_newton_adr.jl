@@ -169,7 +169,8 @@ L_nl = (
       - Laplacian{Linear}(D_cs)
       + NonLinearSi(c -> β * c^3)
       == Source(S_field)
-) → BCs.C → solvers_cfg.C
+) → BCs.C
+L_nl = L_nl → solvers_cfg.C
 
 @info "METHOD 1: Newton-Exact (sparse Jacobian via ForwardDiff)..."
 t_newton = @elapsed result_newton = newton_solve!(L_nl, C_newton, config;
@@ -276,8 +277,8 @@ t_jfnk = @elapsed begin
         # LinearOperator wraps an arbitrary function as a matrix-compatible object.
         # Krylov.gmres will call (y, v) -> jac_vec!(...) at each GMRES iteration.
         J_op = LinearOperator(Float64, n_cells, n_cells, false, false,
-            (y, v) -> jac_vec!(y, v, C_jfnk, r0, eqn_diff, β,
-                               vols, C_save, r_tmp, config))
+            (y, v) -> jac_vec!(y, v, C_jfnk, r0, eqn_jfnk,
+                               C_save, r_tmp, config))
 
         # ── 5. Inner GMRES: solve J·δC = −F to the inexact Newton tolerance ───
         # δC is the Newton search direction. GMRES never needs to store J,

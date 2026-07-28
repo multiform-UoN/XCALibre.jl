@@ -127,7 +127,9 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         test_files = [
             "2d_compressible_KOmega_flatplate_fixedT.jl",
             "2d_compressible_laminar_flatplate_fixedT.jl",
-            "2d_compressible_transient_laminar_heated_cylinder.jl"
+            "2d_compressible_transient_laminar_heated_cylinder.jl",
+            "2d_compressible_transient_cylinder_energy_models.jl",
+            "2d_compressible_supersonic_compression_corner.jl"
         ]
 
         for test ∈ test_files

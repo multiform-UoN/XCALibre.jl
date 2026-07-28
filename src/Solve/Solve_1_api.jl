@@ -94,6 +94,7 @@ SolverSetup(;
 
 struct AdaptiveTimeStepping{F<:AbstractFloat}
     maxCo::F
+    maxAlphaCo::F
     minShrink::F
     maxGrow::F
 end
@@ -104,6 +105,7 @@ Adapt.@adapt_structure AdaptiveTimeStepping
         # keyword arguments
 
         maxCo=0.75,
+        maxAlphaCo=0.5,
         minShrink=0.1,
         maxGrow=1.2
     )
@@ -118,6 +120,7 @@ simulations. If not provided, a fixed time step is used.
 
 - `maxCo::AbstractFloat`: target maximum Courant number. The time step will be adjusted
   such that the computed Courant number approaches this value.
+- `maxAlphaCo::AbstractFloat`: target maximum phase-fraction Courant number.
 - `minShrink::AbstractFloat`: lower bound on the multiplicative factor applied to the
   current time step. Prevents excessively large reductions in a single update.
 - `maxGrow::AbstractFloat`: upper bound on the multiplicative factor applied to the
@@ -125,9 +128,12 @@ simulations. If not provided, a fixed time step is used.
 """
 AdaptiveTimeStepping(;
     maxCo=0.75,
+    maxAlphaCo=0.5,
     minShrink=0.1,
     maxGrow=1.2
-) = AdaptiveTimeStepping(float(maxCo), float(minShrink), float(maxGrow))
+) = AdaptiveTimeStepping(
+    float(maxCo), float(maxAlphaCo), float(minShrink), float(maxGrow)
+)
 
 struct Runtime{I<:Integer,F<:AbstractFloat, V<:AbstractVector{F}, A<:Union{Nothing, AdaptiveTimeStepping}}
     iterations::I
