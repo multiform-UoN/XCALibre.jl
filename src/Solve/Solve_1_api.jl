@@ -611,14 +611,23 @@ end
 
 function jvp!(Jv::AbstractVector, v::AbstractVector, eqn::ModelEquation{T,M,E,S,P}, config; component=nothing, time=nothing, ε=nothing) where {T<:ScalarModel,M,E,S,P}
     phi_vals = get_values(get_phi(eqn), component)
-    F  = eltype(phi_vals)
-    ε0 = ε === nothing ? sqrt(eps(F)) : F(ε)
+    F = eltype(phi_vals)
+    vnorm = norm(v)
+    if iszero(vnorm)
+        fill!(Jv, zero(eltype(Jv)))
+        return Jv
+    end
+    ε0 = ε === nothing ?
+        sqrt(eps(F)) * (one(F) + norm(phi_vals)) / vnorm : F(ε)
     r0 = similar(phi_vals)
     r1 = similar(phi_vals)
     residual!(r0, eqn, config; component=component, time=time, explicit=true)
     @. phi_vals += ε0 * v
-    residual!(r1, eqn, config; component=component, time=time, explicit=true)
-    @. phi_vals -= ε0 * v   # restore
+    try
+        residual!(r1, eqn, config; component=component, time=time, explicit=true)
+    finally
+        @. phi_vals -= ε0 * v
+    end
     @. Jv = (r1 - r0) / ε0
     return Jv
 end

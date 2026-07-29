@@ -49,6 +49,13 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("unit_test_monolithic_vector.jl")
     end
 
+    @testset "PDE Operator Framework" begin
+        include("unit_test_pde_operator.jl")
+        include("unit_test_matrix_free.jl")
+        include("unit_test_split_assembly.jl")
+        include("unit_test_ad_backends.jl")
+    end
+
     @testset "setFields Function Unit Test" begin
         include("unit_test_setFields.jl")
     end

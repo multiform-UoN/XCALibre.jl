@@ -124,9 +124,8 @@ function assemble_monolithic_system(sys::MonolithicSystem, bcs_list, config)
     b_mono = zeros(TF, N)
 
     monolithic_discretise!(sys, A_csr, b_mono, config)
-    # When bcs_list is nothing, BCs are read from sub-equations (set at construction time).
-    # When bcs_list is provided, it is passed for compatibility but the 5-arg overload of
-    # monolithic_apply_bcs! now ignores it and also reads from sub-equations.
+    # Read BCs from the equations by default. An explicit list is significant:
+    # Newton uses it to assemble homogeneous correction equations.
     if bcs_list === nothing
         monolithic_apply_bcs!(sys, A_csr, b_mono, config)
     else
@@ -202,11 +201,12 @@ function extract_global_vector(sys::MonolithicSystem)
     return x
 end
 
-function update_fields!(sys::MonolithicSystem, x)
+function update_fields!(sys::MonolithicSystem, x, scale=one(eltype(x)))
     (; phi_list, n_cells) = sys
     for (i, phi) in enumerate(phi_list)
         row_off = (i - 1) * n_cells
-        phi.values .+= x[row_off+1:row_off+n_cells]  # bulk increment from raw LA vector
+        delta = view(x, row_off+1:row_off+n_cells)
+        @. phi.values += scale * delta
     end
 end
 
@@ -302,27 +302,70 @@ function solve_monolithic!(
     return diagnostics ? (residual=res, linear=stats_history) : res
 end
 
-"""
-    newton_solve!(sys::MonolithicSystem, bcs_list, config)
+function _foreach_reference(f, reference)
+    reference === nothing && return nothing
+    if reference isa Tuple && length(reference) == 3
+        f(reference)
+    else
+        foreach(f, reference)
+    end
+    return nothing
+end
 
-Performs a fully coupled Newton-Raphson solve for a monolithic block system.
-Cross-field non-linear dependencies are resolved via `linearize_physics`.
+function _apply_newton_reference_residual!(r, sys, reference)
+    _foreach_reference(reference) do ref
+        field, value, cellID = ref
+        row = _monolithic_reference_row(sys, field, cellID)
+        phi = field isa Integer ? sys.phi_list[field] : field
+        r[row] = phi.values[cellID] - value
+    end
+    return nothing
+end
+
+function _apply_newton_reference_step!(A_csr, b, r, sys, reference)
+    _foreach_reference(reference) do ref
+        field, _, cellID = ref
+        row = _monolithic_reference_row(sys, field, cellID)
+        apply_monolithic_reference!(A_csr, b, sys, field, -r[row], cellID)
+    end
+    return nothing
+end
+
 """
+    newton_solve!(sys::MonolithicSystem, [bcs_list], config; kwargs...)
+
+Solve a CPU monolithic block system with assembled Newton linearisation.
+Operators explicitly bound to another scalar field are routed to the
+corresponding off-diagonal block. General multivariate nonlinear maps and GPU
+linearisation are not yet supported.
+"""
+newton_solve!(sys::MonolithicSystem, config; kwargs...) =
+    newton_solve!(sys, nothing, config; kwargs...)
+
 function newton_solve!(
     sys::MonolithicSystem, bcs_list, config;
     tol=1e-8, maxiter=config.runtime.iterations, damping=1.0,
-    susp=false, ad_backend=:forwarddiff, verbose=false
+    susp=false, ad_backend=:forwarddiff, verbose=false,
+    reference=nothing, use_preconditioner=false,
+    itmax=5000, atol=1e-12, rtol=1e-10, fail_on_linear_failure=false
 )
+    0 < damping <= 1 ||
+        throw(ArgumentError("damping must satisfy 0 < damping <= 1."))
     (; n_vars, n_cells) = sys
     TF = _get_float(sys.phi_list[1].mesh)
     history = TF[]
     converged = false
     N = n_vars * n_cells
+    active_bcs = bcs_list === nothing ?
+        [get_bcs(eqn) for eqn in sys.equations] : bcs_list
+    length(active_bcs) == length(sys.equations) ||
+        throw(ArgumentError("Expected one BC collection per scalar monolithic equation."))
 
     # Heuristic: use the solver from the first field for the monolithic system.
-    setup = _monolithic_solver_setup(config, false)
+    setup = _monolithic_solver_setup(config, use_preconditioner)
     solver_type = setup.solver
     ws = _workspace(solver_type, zeros(TF, N))
+    r_mono = zeros(TF, N)
 
     for iter in 1:maxiter
         # 1. Linearize all equations
@@ -332,7 +375,7 @@ function newton_solve!(
             # Differentiate equation i w.r.t its self-field AND all other fields
             other_fields = filter(phi -> objectid(phi.values) != objectid(get_phi(eqn).values), sys.phi_list)
 
-            new_bcs, lin_eqn, _ = linearize_physics(bcs_list[i], eqn, other_fields;
+            new_bcs, lin_eqn, _ = linearize_physics(active_bcs[i], eqn, other_fields;
                                                      susp=susp, ad_backend=ad_backend)
             push!(lin_eqns, _with_bcs(lin_eqn, new_bcs))
             push!(lin_bcs, new_bcs)
@@ -340,8 +383,8 @@ function newton_solve!(
         lin_sys = MonolithicSystem(Vector{ModelEquation}(lin_eqns), sys.phi_list)
 
         # 2. Evaluate Exact Global Residual
-        r_mono = zeros(TF, N)
         monolithic_residual!(r_mono, lin_sys, lin_bcs, config)
+        _apply_newton_reference_residual!(r_mono, lin_sys, reference)
         rnorm = norm(r_mono)
 
         push!(history, TF(rnorm))
@@ -353,8 +396,9 @@ function newton_solve!(
 
         # 3. Assemble Homogeneous Jacobian (for correction step J * dx = -R)
         homo_bcs_list = [homogeneous(bcs) for bcs in lin_bcs]
-        A_homo, _ = assemble_monolithic_system(lin_sys, homo_bcs_list, config)
-        b_homo = -r_mono
+        A_homo, b_homo = assemble_monolithic_system(lin_sys, homo_bcs_list, config)
+        @. b_homo = -r_mono
+        _apply_newton_reference_step!(A_homo, b_homo, r_mono, lin_sys, reference)
 
         # 4. Solve the linear system
         A_op = SparseXCSR(A_homo)
@@ -362,16 +406,21 @@ function newton_solve!(
         # Using a very tight inner tolerance for the Newton step
         krylov_solve!(
             ws, A_op, b_homo;
-            M=precon.M, ldiv=precon.ldiv, atol=1e-12, rtol=1e-10,
-            itmax=5000, history=true
+            M=precon.M, ldiv=precon.ldiv, atol=atol, rtol=rtol,
+            itmax=itmax, history=true
         )
 
         if !ws.stats.solved
-            @warn "Monolithic Newton inner $(typeof(solver_type)) did not converge (niter=$(Krylov.iteration_count(ws)))"
+            message = "Monolithic Newton inner $(typeof(solver_type)) did not converge (niter=$(Krylov.iteration_count(ws)))"
+            if fail_on_linear_failure
+                error(message)
+            else
+                @warn message
+            end
         end
 
         # 5. Update Fields
-        update_fields!(sys, ws.x)
+        update_fields!(sys, ws.x, damping)
     end
 
     return (converged=converged, iterations=length(history), residuals=history)

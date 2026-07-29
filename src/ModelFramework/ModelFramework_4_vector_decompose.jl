@@ -61,7 +61,7 @@ function decompose(eqn::ModelEquation{VectorModel, M, E, S, P, ST}) where {M,E,S
         comp_sources = map(eqn.model.sources) do src
             if src.field isa VectorField
                 fld = i == 1 ? src.field.x : (i == 2 ? src.field.y : src.field.z)
-                return Source(fld, src.sign)
+                return Src(fld, src.sign)
             else
                 # Scalar sources apply equally (e.g. 0.0) or must be handled by user
                 return src

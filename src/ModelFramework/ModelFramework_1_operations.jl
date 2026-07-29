@@ -33,6 +33,8 @@ Base.:-(a::PDEOperator, b::TemplateTerm) =
 
 Base.:(==)(L::PDEOperator, s::Src) = PDEOperator(L.templates, (s,), L.BCs, L.setup)
 Base.:(==)(L::PDEOperator, s::Vector{<:Src}) = PDEOperator(L.templates, Tuple(s), L.BCs, L.setup)
+Base.:(==)(t::TemplateTerm, s::Src) = PDEOperator((t,), (s,), (), nothing)
+Base.:(==)(t::TemplateTerm, s::Vector{<:Src}) = PDEOperator((t,), Tuple(s), (), nothing)
 
 # PDEOperator scalar multiplication — scales all fluxes and sources by s
 @inline _scale_template(t::OperatorTemplate, s) = @set t.flux = ScaledFlux(t.flux, s)

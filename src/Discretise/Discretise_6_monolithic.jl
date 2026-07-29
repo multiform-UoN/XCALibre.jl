@@ -113,8 +113,9 @@ function monolithic_apply_bcs!(
     _monolithic_apply_bcs_impl!(sys, A_mono, b_mono, bcs_by_eqn, time)
 end
 
-# 5/6-arg backward-compatible form: bcs_list ignored, delegates to sub-equation BCs.
-# time::Real annotation prevents ambiguity with the 4-arg default-time variant above.
+# 5/6-arg form: use explicitly supplied BCs. This is required by Newton, where
+# the correction equation must use homogeneous BCs even though the nonlinear
+# state equation stores the original BCs.
 function monolithic_apply_bcs!(
     sys::MonolithicSystem,
     A_mono::SparseMatricesCSR.SparseMatrixCSR,
@@ -123,7 +124,9 @@ function monolithic_apply_bcs!(
     config,
     time::Real=0.0
 )
-    monolithic_apply_bcs!(sys, A_mono, b_mono, config, time)
+    length(bcs_list) == length(sys.equations) ||
+        throw(ArgumentError("Expected one BC collection per scalar monolithic equation."))
+    _monolithic_apply_bcs_impl!(sys, A_mono, b_mono, bcs_list, time)
 end
 
 function _monolithic_apply_bcs_impl!(

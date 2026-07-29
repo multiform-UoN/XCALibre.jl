@@ -50,4 +50,16 @@ using LinearAlgebra
     explicit_residual!(r_free, eqn, phi, config)
 
     @test r_mat ≈ Vector(r_free) atol=1e-12
+
+    # The high-level finite-difference JVP uses a norm-scaled perturbation and
+    # restores the field after evaluation.
+    phi_before = copy(phi.values)
+    v = collect(range(0.25, 1.25; length=length(phi.values)))
+    Jv = similar(phi.values)
+    jvp!(Jv, v, eqn, config)
+    @test Jv ≈ eqn.equation.A.parent * v atol=1e-7 rtol=1e-7
+    @test phi.values == phi_before
+
+    jvp!(Jv, zero(v), eqn, config)
+    @test all(iszero, Jv)
 end
