@@ -65,9 +65,9 @@ eqn_d = (
 ) → ScalarEquation(T_d, cfg_d.boundaries.T)
 
 discretise!(eqn_r, T_r, cfg_r)
-apply_boundary_conditions!(eqn_r, cfg_r; time=0.0)
+apply_boundary_conditions!(eqn_r, cfg_r.boundaries.T, nothing, 0.0, cfg_r)
 discretise!(eqn_d, T_d, cfg_d)
-apply_boundary_conditions!(eqn_d, cfg_d; time=0.0)
+apply_boundary_conditions!(eqn_d, cfg_d.boundaries.T, nothing, 0.0, cfg_d)
 
 @testset "Robin → Dirichlet/Zerogradient equivalence" begin
     @test eqn_r.equation.A.parent ≈ eqn_d.equation.A.parent
@@ -102,7 +102,7 @@ eqn_m = (
 ) → ScalarEquation(T_r, cfg_m.boundaries.T)
 
 discretise!(eqn_m, T_r, cfg_m)
-apply_boundary_conditions!(eqn_m, cfg_m; time=0.0)
+apply_boundary_conditions!(eqn_m, cfg_m.boundaries.T, nothing, 0.0, cfg_m)
 
 @testset "Robin mixed BC diagonal coefficient" begin
     area  = 1/3
