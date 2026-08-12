@@ -87,7 +87,7 @@ avg_time = total_time / n_iter
 @info "Calculating Quantities of Interest..."
 
 # 5.1 Volume Average
-vol_avg = volume_average(C)
+vol_avg = volume_average(C, config)
 @printf("Volume Average of C: %.6f\n", vol_avg)
 
 # 5.2 Point Sampling

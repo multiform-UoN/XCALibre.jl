@@ -93,7 +93,7 @@ res_phi = solve_equation!(phi_eqn, phi, BCs.phi, solvers.phi, config)
         mean(psi.values), S_val / 8.0)
 @printf("  Mean ϕ = %.6f  (analytical: S*L⁴/64 ≈ %.4f for unit square)\n",
         mean(phi.values), S_val / 64.0)
-@printf("  Volume-averaged ϕ = %.6f\n", volume_average(phi))
+@printf("  Volume-averaged ϕ = %.6f\n", volume_average(phi, config))
 
 # 7. VTK output
 writer = initialise_writer(VTK(), mesh_dev)

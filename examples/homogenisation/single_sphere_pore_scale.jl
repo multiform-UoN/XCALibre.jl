@@ -193,7 +193,7 @@ function solve_stokes_direction(direction_vector, mesh_dev, BCs, solvers, scheme
     end
 
     # Volume average velocity for permeability
-    return volume_average(U)
+    return volume_average(U, config)
 end
 
 # 4. Main Execution (Tensor Calculation)

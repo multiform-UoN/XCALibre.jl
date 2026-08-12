@@ -105,7 +105,7 @@ function solve_stokes_direction(model, config, J_macro; pref=0.0)
     end
 
     # Calculate volume average velocity using built-in utility
-    return volume_average(U)
+    return volume_average(U, config)
 end
 
 # 1. Setup

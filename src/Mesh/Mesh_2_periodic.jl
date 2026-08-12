@@ -98,8 +98,8 @@ function _construct_periodic_topology_generic(mesh, patch1, patch2, translation,
             # Degenerate case: cell centres coincide after translation shift
             # (happens when inlet/outlet have the same normal direction and uniform grid).
             # Fall back to face-normal stencil: place virtual C2 as mirror of C1 across face.
-            d1 = abs(dot(face1.centre - C1, face1.normal))
-            d2 = abs(dot(face2.centre - mesh.cells[owner2].centre, face1.normal))
+            d1 = abs((face1.centre - C1) ⋅ face1.normal)
+            d2 = abs((face2.centre - mesh.cells[owner2].centre) ⋅ face1.normal)
             delta_fb = d1 + d2
             e_fb = normalize(face1.centre - C1)  # direction from C1 toward face
             TF(0.5), TF(delta_fb), e_fb

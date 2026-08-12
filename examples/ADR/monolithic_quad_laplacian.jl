@@ -76,8 +76,8 @@ res = solve_monolithic!(sys, (BCs.C1, BCs.C2), config)
 @printf("Mean C2:  %.6f\n", mean(C2.values))
 
 # Volume-averaged results using built-in utility
-C1_avg = volume_average(C1)
-C2_avg = volume_average(C2)
+C1_avg = volume_average(C1, config)
+C2_avg = volume_average(C2, config)
 @printf("Vol-avg C1: %.6f\n", C1_avg)
 @printf("Vol-avg C2: %.6f\n", C2_avg)
 

@@ -128,11 +128,11 @@ end
 # 7. Postprocessing
 @printf("\nFinal Results (Cahn-Hilliard sequential):\n")
 @printf("  Mean ϕ  = %.6f\n", mean(phi.values))
-@printf("  Vol-avg ϕ = %.6f\n", volume_average(phi))
-@printf("  Bulk free energy = %.6e\n", volume_integral(phi) * 0.25)
+@printf("  Vol-avg ϕ = %.6f\n", volume_average(phi, config))
+@printf("  Bulk free energy = %.6e\n", volume_integral(phi, config) * 0.25)
 
 # Weighted integral: effective interface position (weight = x-coordinate)
-x_centroid = weighted_volume_integral(phi, (x,y,z)->x) / volume_integral(phi)
+x_centroid = weighted_volume_integral(phi, (x,y,z)->x, config) / volume_integral(phi, config)
 @printf("  Centroid of ϕ-weighted x: %.4f\n", isfinite(x_centroid) ? x_centroid : NaN)
 
 # 8. VTK output

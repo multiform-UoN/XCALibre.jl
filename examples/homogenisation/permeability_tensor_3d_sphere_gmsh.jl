@@ -190,7 +190,7 @@ function solve_cell_problem_3d(model, config, e_j; pref=0.0)
         end
     end
 
-    return volume_integral(U) ./ (2L)^3
+    return volume_integral(U, config) ./ (2L)^3
 end
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
@@ -254,7 +254,7 @@ println("Permeability Tensor K:")
 display(K)
 @printf("\nK_xx = %.6e\nK_yy = %.6e\nK_zz = %.6e\n", K[1,1], K[2,2], K[3,3])
 @printf("Symmetry residual  ‖K - Kᵀ‖/‖K‖ = %.2e\n", norm(K - K') / max(norm(K), eps()))
-porosity = total_volume(mesh_dev) / (2L)^3
+porosity = total_volume(mesh_dev, config) / (2L)^3
 @printf("Fluid porosity φ = %.4f\n", porosity)
 println("─────────────────────────────────────────────")
 @info "Done."
