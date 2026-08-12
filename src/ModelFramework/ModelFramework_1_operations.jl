@@ -8,10 +8,30 @@ const TemplateTerm = Union{OperatorTemplate,NonlinearOperatorTemplate,Time}
 @inline _negate_template(t::Operator) = @set t.sign = -t.sign
 
 Base.:+(a::TemplateTerm, b::TemplateTerm) = PDEOperator((a, b), (), (), nothing)
+
+# Normalise the "time term must come first" invariant (see
+# TODO.md, "Hidden operator-ordering rules") for raw,
+# not-yet-composed TemplateTerm addition too, mirroring the PDEOperator+Time
+# special case further below. Without these, `Laplacian(...) + Time(...)`
+# would silently place the time term second, while `Time(...) + Laplacian(...)`
+# happened to already be correct — an order-dependent footgun in the PDE
+# operator DSL. These overloads make both orderings equivalent.
+Base.:+(a::TemplateTerm, b::OperatorTemplate{F,S,T,P}) where {F,S,T<:Time,P} =
+    PDEOperator((b, a), (), (), nothing)
+Base.:+(a::OperatorTemplate{F,S,T,P}, b::TemplateTerm) where {F,S,T<:Time,P} =
+    PDEOperator((a, b), (), (), nothing)
+# Disambiguate the (unusual) case of adding two time terms directly: preserve
+# argument order rather than raising a method ambiguity error.
+Base.:+(a::OperatorTemplate{F1,S1,T1,P1}, b::OperatorTemplate{F2,S2,T2,P2}) where
+    {F1,S1,T1<:Time,P1,F2,S2,T2<:Time,P2} = PDEOperator((a, b), (), (), nothing)
+
 Base.:+(a::TemplateTerm, b::Operator) = PDEOperator((a, b), (), (), nothing)
 Base.:+(a::Operator, b::TemplateTerm) = PDEOperator((a, b), (), (), nothing)
 Base.:+(a::PDEOperator, b::OperatorTemplate{F,S,T,P}) where {F,S,T<:Time,P} =
     PDEOperator((b, a.templates...), a.sources, a.BCs, a.setup)
+# Symmetric case: Time(...) + PDEOperator(...), same normalisation as above.
+Base.:+(a::OperatorTemplate{F,S,T,P}, b::PDEOperator) where {F,S,T<:Time,P} =
+    PDEOperator((a, b.templates...), b.sources, b.BCs, b.setup)
 Base.:+(a::PDEOperator, b::TemplateTerm) = PDEOperator((a.templates..., b), a.sources, a.BCs, a.setup)
 Base.:+(a::PDEOperator, b::Src) = PDEOperator(a.templates, (a.sources..., b), a.BCs, a.setup)
 

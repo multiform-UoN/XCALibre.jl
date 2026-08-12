@@ -83,14 +83,18 @@ initialise!(model.energy.T, 300.0)
 initialise!(model.fluid.rho, 1.0)
 
 update_viscosity!(model.fluid, model.energy, config)
-print(model.fluid.nu.nu.values)  # Debugging output
 
+# fluid.nu is a ScalarField (cell-centred) and fluid.nuf a FaceScalarField
+# (face-interpolated) for Sutherland viscosity
 expected_nu = mu_ref * (300.0 / T_ref)^(3/2) * (T_ref + S) / (300.0 + S) / 1.0
-@test model.fluid.nu.nu.values[0] ≈ expected_nu
+@test model.fluid.nu[1] ≈ expected_nu
+@test all(v -> v ≈ expected_nu, model.fluid.nu.values)
+@test all(v -> v ≈ expected_nu, model.fluid.nuf.values)
 
 initialise!(model.energy.T, 150.0)
 update_viscosity!(model.fluid, model.energy, config)
-print(model.fluid.nu.nu.values)  # Debugging output
 
 expected_nu = mu_ref * (150.0 / T_ref)^(3/2) * (T_ref + S) / (150.0 + S) / 1.0
-@test model.fluid.nu.nu.values[0] ≈ expected_nu
+@test model.fluid.nu[1] ≈ expected_nu
+@test all(v -> v ≈ expected_nu, model.fluid.nu.values)
+@test all(v -> v ≈ expected_nu, model.fluid.nuf.values)

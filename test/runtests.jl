@@ -45,6 +45,10 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("unit_test_robin.jl")
     end
 
+    @testset "BC entry-point equivalence" begin
+        include("unit_test_bc_entrypoints.jl")
+    end
+
     @testset "Monolithic VectorModel Decomposition" begin
         include("unit_test_monolithic_vector.jl")
     end
@@ -54,6 +58,7 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("unit_test_matrix_free.jl")
         include("unit_test_split_assembly.jl")
         include("unit_test_ad_backends.jl")
+        include("unit_test_operator_ordering.jl")
     end
 
     @testset "setFields Function Unit Test" begin
@@ -70,6 +75,10 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
 
     @testset "Fluid Properties Unit Test" begin
         include("unit_test_fluidProperties.jl")
+    end
+
+    @testset "Viscosity Models Unit Test" begin
+        include("unit_test_ViscosityModels.jl")
     end
 
     @testset "Laplace Functionality Test" begin

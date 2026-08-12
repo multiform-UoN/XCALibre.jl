@@ -1,6 +1,21 @@
 export apply_boundary_conditions!, apply_bc_residuals!
 
-
+# NOTE ON THE TWO METHODS BELOW
+# These are two call conventions for the *same* boundary-condition semantics,
+# both delegating to the single `_apply_boundary_conditions!` implementation
+# below. Neither method encodes its own BC logic, so they cannot drift apart
+# into competing implementations:
+#   - `apply_boundary_conditions!(eqn, config; time, component)` is the
+#     equation-owned form used by the PDE operator framework: BCs are read
+#     from `eqn` itself via `get_bcs(eqn)` (see
+#     ModelFramework_2_access_functions.jl). This is additive fork surface.
+#   - `apply_boundary_conditions!(eqn, BCs, component, time, config)` is the
+#     original upstream positional form, where BCs are supplied explicitly by
+#     the caller (SIMPLE/PISO/CPISO, FilmModel, LES k-equation, etc.). This
+#     form is preserved unchanged so upstream-derived solver code keeps
+#     working, and future upstream merges see no signature change here.
+# See `test/unit_test_bc_entrypoints.jl` for a regression test asserting both
+# entry points produce identical assembled systems for the same BCs.
 
 apply_boundary_conditions!(eqn, config; time=nothing, component=nothing) = begin
     _apply_boundary_conditions!(eqn.model, get_bcs(eqn), eqn, component, time, config)
