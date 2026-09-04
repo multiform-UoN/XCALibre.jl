@@ -343,13 +343,15 @@ end
 ### TEMP LOCATION FOR PROTOTYPING
 
 function correct_mass_flux!(
-    mdotf, p_eqn, config; previous, time=nothing, nonorthogonal=nothing)
+    mdotf, p_eqn, config; previous=nothing, time=nothing, nonorthogonal=nothing)
     # sngrad = FaceScalarField(mesh)
     (; faces, cells, boundary_cellsID) = mdotf.mesh
     (; hardware) = config
     (; backend, workgroup) = hardware
 
-    p = p_eqn.model.terms[1].phi
+    terms = p_eqn.model.terms
+    pterm = terms[laplacian_term_index(terms)]
+    p = pterm.phi
     A = _A(p_eqn)
     nzval = _nzval(A)
     colval = _colval(A)
@@ -373,8 +375,10 @@ function correct_mass_flux!(
         KernelAbstractions.synchronize(backend)
     end
 
+    U_BCs = hasproperty(config.boundaries, :U) ? config.boundaries.U : ()
+    prev_vals = isnothing(previous) ? p.values : previous
     correct_boundary_mass_flux!(
-        mdotf, p_eqn, p_BCs, config.boundaries.U, previous, time, config)
+        mdotf, p_eqn, p_BCs, U_BCs, prev_vals, time, config)
 end
 
 correct_nonorthogonal_mass_flux!(mdotf, ::Nothing, config) = nothing
