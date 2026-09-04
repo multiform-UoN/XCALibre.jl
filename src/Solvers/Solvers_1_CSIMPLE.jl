@@ -174,10 +174,12 @@ function CSIMPLE(
     divmugradUTx = ScalarField(mesh)
     divmugradUTy = ScalarField(mesh)
     divmugradUTz = ScalarField(mesh)
+    nonorthogonal_flux = ncorrectors > 0 ? FaceScalarField(mesh) : nothing
 
     # Pre-allocate auxiliary variables
     TF = _get_float(mesh)
-    prev = KernelAbstractions.zeros(backend, TF, n_cells)
+    prev = KernelAbstractions.zeros(backend, TF, n_cells) 
+    p_boundary_reference = similar(prev)
 
     # Pre-allocate vectors to hold residuals
     R_ux = ones(TF, iterations)
@@ -225,7 +227,9 @@ function CSIMPLE(
         @. model.energy.prevP = p.values
 
         # Set up and solve momentum equations
-        rx, ry, rz = solve_equation!(U_eqn, config; rho_prev=rho)
+        rx, ry, rz = solve_equation!(
+            U_eqn, U, boundaries.U, solvers.U, xdir, ydir, zdir, config; rho_prev=rho
+        )
 
         # Solve energy equation and update thermo properties
         energy!(energyModel, model, mdotf, ∇p, gradU, mueff, time, dt_cpu[1], config)
@@ -265,12 +269,27 @@ function CSIMPLE(
         # Pressure calculations
         rp = 0.0
         @. prev = p.values
+        @. p_boundary_reference = p.values
         if typeof(model.fluid) <: Compressible
             rp = solve_equation!(
-                p_eqn, config;
-                ref=nothing, irelax=solvers.p.relax) # perform implicit relaxation
+                p_eqn, p, boundaries.p, solvers.p, config; 
+                ref=nothing)
         elseif typeof(model.fluid) <: WeaklyCompressible
-            rp = solve_equation!(p_eqn, config; ref=nothing)
+            rp = solve_equation!(p_eqn, p, boundaries.p, solvers.p, config; ref=nothing)
+        end
+
+        # non-orthogonal correction
+        for i ∈ 1:ncorrectors
+            grad!(∇p, pf, p, boundaries.p, time, config)
+            limit_gradient!(schemes.p.limiter, ∇p, p, config)
+            @. p_boundary_reference = p.values
+            discretise!(p_eqn, p, config)
+            apply_boundary_conditions!(p_eqn, boundaries.p, nothing, time, config)
+            setReference!(p_eqn, pref, 1, config)
+            nonorthogonal_face_correction(
+                p_eqn, ∇p, rhorDf, config; correction=nonorthogonal_flux)
+            update_preconditioner!(p_eqn.preconditioner, p.mesh, config)
+            rp = solve_system!(p_eqn, solvers.p, p, nothing, config)
         end
 
         if !isnothing(solvers.p.limit)
@@ -278,36 +297,20 @@ function CSIMPLE(
             clamp!(p.values, pmin, pmax)
         end
 
-        if typeof(model.fluid) <: WeaklyCompressible
-            explicit_relaxation!(p, prev, solvers.p.relax, config)
-        end
+        # Correct pressure-dependent fluxes before under-relaxing cell pressure.
         grad!(∇p, pf, p, boundaries.p, time, config)
         limit_gradient!(schemes.p.limiter, ∇p, p, config)
-
-        # non-orthogonal correction
-        for i ∈ 1:ncorrectors
-            discretise!(p_eqn, p, config)
-            apply_boundary_conditions!(p_eqn, config; time=time)
-            setReference!(p_eqn, pref, 1, config)
-            nonorthogonal_face_correction(p_eqn, ∇p, rhorDf, config)
-            update_preconditioner!(p_eqn.preconditioner, p.mesh, config)
-            rp = solve_system!(p_eqn, solvers.p, p, nothing, config)
-            if typeof(model.fluid) <: WeaklyCompressible
-                explicit_relaxation!(p, prev, solvers.p.relax, config)
-            end
-
-            grad!(∇p, pf, p, boundaries.p, time, config)
-            project_grad_tangent!(∇p, boundaries.U, config)
-            limit_gradient!(schemes.p.limiter, ∇p, p, config)
-        end
-
-        # Correct mass flux and cell velocity
-
         if typeof(model.fluid) <: Compressible
             @. mdotf.values += pconv.values*(pf.values)
         end
-        correct_mass_flux!(mdotf, p_eqn, config)
+        correct_mass_flux!(
+            mdotf, p_eqn, config;
+            previous=p_boundary_reference, time=time,
+            nonorthogonal=nonorthogonal_flux)
 
+        explicit_relaxation!(p, prev, solvers.p.relax, config)
+        grad!(∇p, pf, p, boundaries.p, time, config)
+        limit_gradient!(schemes.p.limiter, ∇p, p, config)
         correct_velocity!(U, Hv, ∇p, rD, config)
 
         # Perform turbulence calculations and update eddy viscosity

@@ -21,8 +21,19 @@ Adapt.@adapt_structure Slip
 
 Slip(name::Symbol) = Slip(name, 0)
 
-@define_boundary Slip Laplacian{Linear} begin
+@define_boundary Slip Laplacian{Linear} ScalarField begin
     0.0, 0.0
+end
+
+@define_boundary Slip Laplacian{Linear} VectorField begin
+    (; area, delta, normal) = face
+    J = term.flux[fID]
+    flux = J*area/delta
+    ap = term.sign[1]*(-flux)
+
+    vc = term.phi[cellID]
+    vp = vc - (vc⋅normal)*normal
+    ap, ap*vp[component.value]
 end
 
 # Face value = tangential projection vp = vc - (vc⋅n)n. Split the same-component
@@ -57,9 +68,14 @@ end
     ac, su
 end
 
-# Impermeable wall: face value = cell value, so div (+ap) and bounding (-ap) cancel
+# Scalars cancel exactly. For vectors, the projected face value leaves the normal
+# component from div(phi,U) - Sp(div(phi),U).
 @define_boundary Slip Divergence{BoundedUpwind} VectorField begin
-    0.0, 0.0
+    (; normal) = face
+    ap = term.sign*term.flux[fID]
+    vc = term.phi[cellID]
+    vn = (vc⋅normal)*normal
+    0.0, ap*vn[component.value]
 end
 
 @define_boundary Slip Divergence{BoundedUpwind} ScalarField begin
@@ -133,4 +149,8 @@ end
     su_entering = -min(ap, z) * vp_c
     
     ac, su_entering + su_leaving
+end
+
+@define_boundary Slip Si begin
+    0.0, 0.0
 end
