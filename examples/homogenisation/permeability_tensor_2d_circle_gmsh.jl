@@ -37,8 +37,12 @@ using Accessors
 # ── Parameters ────────────────────────────────────────────────────────────────
 const L         = 1.0     # half-cell side (cell is [-L, L]², side = 2L)
 const R         = 0.5     # inclusion radius
-const mesh_size = 0.08    # target element size
+const mesh_size = 0.03    # target element size; refine for cross-code comparison
 const ν         = 1.0     # kinematic viscosity
+const include_convection = false
+# false: linear Stokes cell problem comparable with Ferrite/OpenFOAM.
+# true: steady Navier-Stokes variant; then <U> depends on forcing amplitude
+# and is not the linear Darcy permeability tensor.
 
 # ── Gmsh mesh generation ─────────────────────────────────────────────────────
 """
@@ -125,14 +129,24 @@ function solve_cell_problem(model, config, e_j; pref=0.0)
     macro_grad = VectorField(mesh)
     initialise!(macro_grad, e_j)
 
-    # Use the new PDEOperator paradigm
-    L_U = ((
-          Time{schemes.U.time}()
-        + Divergence{schemes.U.divergence}(mdotf)
-        - Laplacian{schemes.U.laplacian}(nueff)
-        ==
-        - Source(∇p.result) + Source(macro_grad)
-    ) → boundaries.U) → solvers.U
+    # Both variants share the same pressure correction. In the Stokes branch,
+    # mdotf enforces incompressibility but does not enter momentum convection.
+    L_U = if include_convection
+        ((
+              Time{schemes.U.time}()
+            + Divergence{schemes.U.divergence}(mdotf)
+            - Laplacian{schemes.U.laplacian}(nueff)
+            ==
+            - Source(∇p.result) + Source(macro_grad)
+        ) → boundaries.U) → solvers.U
+    else
+        ((
+              Time{schemes.U.time}()
+            - Laplacian{schemes.U.laplacian}(nueff)
+            ==
+            - Source(∇p.result) + Source(macro_grad)
+        ) → boundaries.U) → solvers.U
+    end
 
     L_p = ((
         - Laplacian{schemes.p.laplacian}(rDf) == - Source(divHv)
@@ -166,6 +180,7 @@ function solve_cell_problem(model, config, e_j; pref=0.0)
 
     xdir, ydir, zdir = XDir(), YDir(), ZDir()
 
+    converged = false
     for iter in 1:runtime.iterations
         rx, ry, rz = solve_equation!(U_eqn, config)
         inverse_diagonal!(rD, U_eqn, config)
@@ -187,8 +202,13 @@ function solve_cell_problem(model, config, e_j; pref=0.0)
         if rx < solvers.U.convergence && ry < solvers.U.convergence && rp < solvers.p.convergence
             @printf("    converged at iter %4d  (rx=%.2e  ry=%.2e  rp=%.2e)\n",
                     iter, rx, ry, rp)
+            converged = true
             break
         end
+    end
+
+    if !converged
+        @warn "Cell problem reached the iteration limit; do not treat its effective coefficient as converged" direction=e_j iterations=runtime.iterations
     end
 
     # K_ij = (1/|Y|) ∫_{Y_f} w_i dΩ,  |Y| = (2L)²
@@ -238,7 +258,7 @@ solvers = (
 config = Configuration(
     solvers    = solvers,
     schemes    = schemes,
-    runtime    = Runtime(iterations=2000, write_interval=-1, time_step=1.0),
+    runtime    = Runtime(iterations=10000, write_interval=-1, time_step=1.0),
     hardware   = hardware,
     boundaries = BCs,
 )
@@ -249,14 +269,19 @@ for j in 1:2
     e_j = zeros(3); e_j[j] = 1.0
     @info "Cell problem  e_$j = $e_j"
     w_j = solve_cell_problem(model, config, e_j)
-    K[:, j] .= w_j[1:2]
+    # For linear Stokes, multiplying the velocity response by nu removes the
+    # arbitrary viscosity used in the unit-acceleration cell problem.
+    # In the nonlinear variant retain the response itself; it is not K.
+    K[:, j] .= (include_convection ? 1.0 : ν) .* w_j[1:2]
 end
 
 println("\n─────────────────────────────────────────────")
-println("Permeability Tensor K:")
+println(include_convection ? "Unit-force velocity response (not linear permeability):" : "Permeability Tensor K:")
 display(K)
 @printf("\nK_xx = %.6e\nK_yy = %.6e\n", K[1,1], K[2,2])
-@printf("Symmetry residual  ‖K - Kᵀ‖/‖K‖ = %.2e\n", norm(K - K') / max(norm(K), eps()))
+if !include_convection
+    @printf("Symmetry residual  ‖K - Kᵀ‖/‖K‖ = %.2e\n", norm(K - K') / max(norm(K), eps()))
+end
 porosity = total_volume(mesh_dev, config) / (2L)^2
 @printf("Fluid porosity φ = %.4f\n", porosity)
 println("─────────────────────────────────────────────")
