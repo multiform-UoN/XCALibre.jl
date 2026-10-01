@@ -166,6 +166,7 @@ Adapt.@adapt_structure AffineOperator
 
 _get_flux(term::Operator) = term.flux
 _get_flux(term::AffineOperator) = _get_flux(term.op)
+_get_flux(term::NonlinearOperator) = _get_flux(term.op)
 _get_flux(term) = nothing
 
 # Type tag for nonlinear implicit source (linearised each outer iteration)
@@ -300,13 +301,17 @@ _build_A(backend::CPU, i, j, v, n) = SparseXCSR(sparsecsr(i, j, v, n, n))
 _build_opA(A::SparseXCSR) = A
 
 ## ORIGINAL STRUCTURE PARAMETERISED FOR GPU
-struct ScalarEquation{Fld, VTf, AM<:AbstractMatrix, OP, B} <: AbstractEquation
-    phi::Fld
-    A::AM
+# phi and BCs are retained so a mathematical operator can be applied to several
+# fields and boundary conditions. diag_nz and face_nz are the upstream assembly maps.
+struct ScalarEquation{VTf<:AbstractVector, VTi<:AbstractVector, ASA<:AbstractSparseArray, OP, Fld, B} <: AbstractEquation
+    A::ASA
     opA::OP
     b::VTf
     R::VTf
     Fx::VTf
+    diag_nz::VTi  # nzval index of A[i,i]
+    face_nz::VTi  # nzval index of A[owner, neighbour], indexed like mesh.cell_neighbours
+    phi::Fld
     BCs::B
 end
 Adapt.@adapt_structure ScalarEquation
@@ -340,30 +345,36 @@ ScalarEquation(phi::ScalarField, BCs; extended=false) = begin
     end
 
     i, j = extend_matrix(mesh, BCs, i, j)
+    _check_index_capacity(eltype(i), length(j) + 1, "the matrix entry count")
     v = zeros(Tf, length(j))
     backend = _get_backend(mesh)
     A = _build_A(backend, i, j, v, nCells)
+    diag_nz, face_nz = nz_index_maps(mesh_temp, A, backend)
     ScalarEquation(
-        phi,
         A,
         _build_opA(A),
         KernelAbstractions.zeros(backend, Tf, nCells),
         KernelAbstractions.zeros(backend, Tf, nCells),
         KernelAbstractions.zeros(backend, Tf, nCells),
+        diag_nz,
+        face_nz,
+        phi,
         BCs
         )
 end
 
-struct VectorEquation{Fld, VTf, AM<:AbstractMatrix, OP, B} <: AbstractEquation
-    psi::Fld
-    A0::AM
-    A::AM
+struct VectorEquation{VTf<:AbstractVector, VTi<:AbstractVector, ASA<:AbstractSparseArray, OP, Fld, B} <: AbstractEquation
+    A0::ASA
+    A::ASA
     opA::OP
     bx::VTf
     by::VTf
     bz::VTf
     R::VTf
     Fx::VTf
+    diag_nz::VTi
+    face_nz::VTi
+    psi::Fld
     BCs::B
 end
 Adapt.@adapt_structure VectorEquation
@@ -375,37 +386,25 @@ VectorEquation(psi::VectorField, BCs) = begin
     mesh_temp = adapt(CPU(), mesh) # WARNING: Temp solution
     i, j, v = sparse_matrix_connectivity(mesh_temp) # This needs to be a kernel
     i, j = extend_matrix(mesh, BCs, i, j)
-    # i = [i; periodicConnectivity.i]
-    # j = [j; periodicConnectivity.j]
+    _check_index_capacity(eltype(i), length(j) + 1, "the matrix entry count")
     v = zeros(Tf, length(j))
     backend = _get_backend(mesh)
-    # A = _convert_array!(sparse(i, j, v), backend)
-    # A0 = _convert_array!(sparse(i, j, v), backend)
-    # A = _convert_array!(sparsecsr(i, j, v), backend)
-    # A0 = _convert_array!(sparsecsr(i, j, v), backend)
 
     A = _build_A(backend, i, j, v, nCells)
     A0 = _build_A(backend, i, j, v, nCells)
+    diag_nz, face_nz = nz_index_maps(mesh_temp, A, backend)
     VectorEquation(
-        psi,
         A0,
         A,
-
         _build_opA(A),
-        # KP.KrylovOperator(A),
-        # A,
-
-        # _convert_array!(zeros(Tf, nCells), backend),
-        # _convert_array!(zeros(Tf, nCells), backend),
-        # _convert_array!(zeros(Tf, nCells), backend),
-        # _convert_array!(zeros(Tf, nCells), backend),
-        # _convert_array!(zeros(Tf, nCells), backend)
-
         KernelAbstractions.zeros(backend, Tf, nCells),
         KernelAbstractions.zeros(backend, Tf, nCells),
         KernelAbstractions.zeros(backend, Tf, nCells),
         KernelAbstractions.zeros(backend, Tf, nCells),
         KernelAbstractions.zeros(backend, Tf, nCells),
+        diag_nz,
+        face_nz,
+        psi,
         BCs
         )
 end
@@ -437,6 +436,25 @@ function sparse_matrix_connectivity(mesh::AbstractMesh)
     return i, j, v
 end
 
+
+# The CSR sparsity pattern is fixed for the life of an equation, so the nzval index of every
+# coefficient the assembly writes can be resolved once instead of searched for on every call.
+# Built on the host from a host mesh, then moved to the backend with the rest of the equation.
+function nz_index_maps(mesh, A, backend)
+    TI = _get_int(mesh)
+    rowptr = _rowptr(A) |> Array
+    colval = _colval(A) |> Array
+    (; cells, cell_neighbours) = mesh
+    diag_nz = zeros(TI, length(cells))
+    face_nz = zeros(TI, length(cell_neighbours))
+    for cID ∈ eachindex(cells)
+        diag_nz[cID] = spindex(rowptr, colval, cID, cID)
+        for fi ∈ cells[cID].faces_range
+            face_nz[fi] = spindex(rowptr, colval, cID, cell_neighbours[fi])
+        end
+    end
+    (adapt(backend, diag_nz), adapt(backend, face_nz))
+end
 
 # Sparse CSR format
 function spindex(rowptr::AbstractArray{T}, colval, i, j) where T
@@ -485,14 +503,18 @@ Adapt.@adapt_structure ScalarModel
 struct VectorModel end
 Adapt.@adapt_structure VectorModel
 
-struct ModelEquation{T,M,E,S,P,ST}
+# setup is unparameterised so ModelEquation{T,M,E,S,P} stays the upstream type.
+# Production solvers leave it nothing and pass SolverSetup into solve_equation!.
+# PDE scripts may store a SolverSetup here and call solve_equation!(eqn, config).
+struct ModelEquation{T,M,E,S,P}
     type::T
     model::M
     equation::E
     solver::S
     preconditioner::P
-    setup::ST
+    setup
 end
+ModelEquation(t, m, e, s, p) = ModelEquation(t, m, e, s, p, nothing)
 Adapt.@adapt_structure ModelEquation
 # Monolithic (block-coupled) system container
 struct MonolithicSystem{E<:Vector{<:ModelEquation}, F}

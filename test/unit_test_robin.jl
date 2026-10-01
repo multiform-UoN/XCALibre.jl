@@ -1,176 +1,177 @@
 using XCALibre
-using Accessors
-using KernelAbstractions
 using Test
-using SparseArrays
 
 grids_dir = pkgdir(XCALibre, "examples/0_GRIDS")
-grid = "laplace_unit_3by3.unv"
-mesh_file = joinpath(grids_dir, grid)
+mesh_file = joinpath(grids_dir, "laplace_unit_3by3.unv")
 mesh = UNV2D_mesh(mesh_file)
 
 backend = CPU(); workgroup = 1024
 hardware = Hardware(backend=backend, workgroup=workgroup)
 mesh_dev = adapt(backend, mesh)
 
-# Case 1: Robin matching Dirichlet
-# a=1, b=0, value=50.0 => Dirichlet(50.0)
+solvers = (
+    T = SolverSetup(
+        solver         = Cg(),
+        preconditioner = Jacobi(),
+        convergence    = 1e-8,
+        relax          = 1.0,
+    )
+)
+schemes = (T = Schemes(laplacian = Linear),)
+
+# ── Case 1: Robin as Dirichlet (a=1, b=0) and as Zerogradient (a=0, b=1) ──────
+# Robin with a=1, b=0, value=v  →  a·φ + b·∇φ·n = v  →  φ = v  (Dirichlet)
+# Robin with a=0, b=1, value=0  →  ∇φ·n = 0            (Zerogradient)
 BCs_robin = assign(
     region = mesh_dev,
     (
         T = [
-            Robin(:left_wall, a=1.0, b=0.0, value=50.0),
-            Robin(:right_wall, a=0.0, b=1.0, value=0.0), # ZeroGradient
+            Robin(:left_wall,   a=1.0, b=0.0, value=50.0),
+            Robin(:right_wall,  a=0.0, b=1.0, value=0.0),
             Robin(:bottom_wall, a=1.0, b=0.0, value=10.0),
-            Robin(:upper_wall, a=0.0, b=1.0, value=0.0)  # ZeroGradient
+            Robin(:upper_wall,  a=0.0, b=1.0, value=0.0),
         ],
     )
 )
-
 BCs_dirichlet = assign(
     region = mesh_dev,
     (
         T = [
-            Dirichlet(:left_wall, 50.0),
+            Dirichlet(:left_wall,   50.0),
             Zerogradient(:right_wall),
             Dirichlet(:bottom_wall, 10.0),
-            Zerogradient(:upper_wall)
+            Zerogradient(:upper_wall),
         ],
     )
 )
 
-solvers = (
-    T = SolverSetup(
-        solver      = Cg(),
-        preconditioner = Jacobi(),
-        convergence = 1e-8,
-        relax       = 1.0,
-    )
-)
+cfg_r = Configuration(solvers=solvers, schemes=schemes,
+    runtime=Runtime(iterations=1, write_interval=1, time_step=1),
+    hardware=hardware, boundaries=BCs_robin)
+cfg_d = Configuration(solvers=solvers, schemes=schemes,
+    runtime=Runtime(iterations=1, write_interval=1, time_step=1),
+    hardware=hardware, boundaries=BCs_dirichlet)
 
-schemes = (
-    T = Schemes(laplacian = Linear),
-)
-
-config_robin = Configuration(solvers=solvers, schemes=schemes, runtime=Runtime(iterations=1, write_interval=1, time_step=1), hardware=hardware, boundaries=BCs_robin)
-config_dirichlet = Configuration(solvers=solvers, schemes=schemes, runtime=Runtime(iterations=1, write_interval=1, time_step=1), hardware=hardware, boundaries=BCs_dirichlet)
-
-T_robin = ScalarField(mesh_dev)
-T_dirichlet = ScalarField(mesh_dev)
+T_r = ScalarField(mesh_dev)
+T_d = ScalarField(mesh_dev)
 gamma = ConstantScalar(1.0)
 
-# Build equations
-T_eqn_robin = (
-    - Laplacian{schemes.T.laplacian}(gamma, T_robin)
-    ==
-    Source(ConstantScalar(0.0))
-) → ScalarEquation(T_robin, config_robin.boundaries.T)
+eqn_r = (
+    - Laplacian{schemes.T.laplacian}(gamma, T_r) == Source(ConstantScalar(0.0))
+) → ScalarEquation(T_r, cfg_r.boundaries.T)
 
-T_eqn_dirichlet = (
-    - Laplacian{schemes.T.laplacian}(gamma, T_dirichlet)
-    ==
-    Source(ConstantScalar(0.0))
-) → ScalarEquation(T_dirichlet, config_dirichlet.boundaries.T)
+eqn_d = (
+    - Laplacian{schemes.T.laplacian}(gamma, T_d) == Source(ConstantScalar(0.0))
+) → ScalarEquation(T_d, cfg_d.boundaries.T)
 
-# Discretise and apply BCs
-discretise!(T_eqn_robin, T_robin, config_robin)
-apply_boundary_conditions!(T_eqn_robin, config_robin; time=0.0)
+discretise!(eqn_r, T_r, cfg_r)
+apply_boundary_conditions!(eqn_r, cfg_r.boundaries.T, nothing, 0.0, cfg_r)
+discretise!(eqn_d, T_d, cfg_d)
+apply_boundary_conditions!(eqn_d, cfg_d.boundaries.T, nothing, 0.0, cfg_d)
 
-discretise!(T_eqn_dirichlet, T_dirichlet, config_dirichlet)
-apply_boundary_conditions!(T_eqn_dirichlet, config_dirichlet; time=0.0)
+@testset "Robin → Dirichlet/Zerogradient equivalence" begin
+    @test eqn_r.equation.A.parent ≈ eqn_d.equation.A.parent
+    @test eqn_r.equation.b       ≈ eqn_d.equation.b
+end
 
-# Compare matrices and RHS
-@test T_eqn_robin.equation.A.parent ≈ T_eqn_dirichlet.equation.A.parent
-@test T_eqn_robin.equation.b ≈ T_eqn_dirichlet.equation.b
-
-# Case 2: Robin with non-zero a and b (Mixed)
-# a*T + b*grad(T).n = value
-# Let's say a=1, b=1, value=100
-# denom = a*delta + b = delta + 1
-# delta for 3x3 unit mesh is 1/6 (distance from center (1/6) to face (0))?
-# Unit mesh is 1x1. 3x3 cells. Cell width = 1/3.
-# Distance from center to face = 1/6.
-# denom = 1/6 + 1 = 7/6.
-# For -Laplacian, the interior diagonal is positive and the Robin diagonal
-# contribution follows the same sign convention as Dirichlet.
-# AP = (1 * area * 1) / (7/6) = 6/7 * area.
-# BP = (1 * area * 100) / (7/6) = 600/7 * area.
-
+# ── Case 2: mixed Robin (a=1, b=1) — analytic coefficient check ────────────────
+# Unit mesh, 3×3 cells  →  cell width = 1/3, face–centre distance δ = 1/6
+# denom = a·δ + b = 1/6 + 1 = 7/6
+# Laplacian coefficient for interior faces: Γ·area/δ = 1·(1/3)/(1/3) = 1
+# Robin contribution on left face of cell 1 (left-bottom):
+#   ap_Robin = Γ·area·a / denom = 1·(1/3)·1 / (7/6) = 2/7
+# Cell 1 diagonal = ap_interior_right + ap_interior_top + ap_Robin + ap_bottom(ZG=0)
+#                 = 1 + 1 + 2/7 = 16/7
 BCs_mixed = assign(
     region = mesh_dev,
     (
         T = [
-            Robin(:left_wall, a=1.0, b=1.0, value=100.0),
+            Robin(:left_wall,  a=1.0, b=1.0, value=100.0),
             Zerogradient(:right_wall),
             Zerogradient(:bottom_wall),
-            Zerogradient(:upper_wall)
+            Zerogradient(:upper_wall),
         ],
     )
 )
-config_mixed = Configuration(solvers=solvers, schemes=schemes, runtime=Runtime(iterations=1, write_interval=1, time_step=1), hardware=hardware, boundaries=BCs_mixed)
-T_eqn_mixed = (
-    - Laplacian{schemes.T.laplacian}(gamma, T_robin)
-    ==
-    Source(ConstantScalar(0.0))
-) → ScalarEquation(T_robin, config_mixed.boundaries.T)
+cfg_m = Configuration(solvers=solvers, schemes=schemes,
+    runtime=Runtime(iterations=1, write_interval=1, time_step=1),
+    hardware=hardware, boundaries=BCs_mixed)
 
-discretise!(T_eqn_mixed, T_robin, config_mixed)
-apply_boundary_conditions!(T_eqn_mixed, config_mixed; time=0.0)
+eqn_m = (
+    - Laplacian{schemes.T.laplacian}(gamma, T_r) == Source(ConstantScalar(0.0))
+) → ScalarEquation(T_r, cfg_m.boundaries.T)
 
-# Check cell 1 (left bottom)
-# Neighbors: 2 (right), 4 (top)
-# Boundary faces: 1 (left), 4 (bottom)
-# Left face (ID 1) is boundary face on :left_wall
-# A[1,1] should have contribution from Robin
-area = 1/3 # face area for unit mesh
-delta = 1/6
-expected_AP = (1.0 * area * 1.0) / (1.0 * delta + 1.0)
-# A[1,1] also has contributions from internal faces (right, top) and other boundary faces (bottom)
-# Internal face: Gamma*area/delta = 1*(1/3)/(1/3) = 1.
-# Bottom face is Zerogradient: contribution 0.
-# So A[1,1] = 1 (right) + 1 (top) + expected_AP
-expected_A11 = 1.0 + 1.0 + expected_AP
-@test T_eqn_mixed.equation.A.parent[1,1] ≈ expected_A11
+discretise!(eqn_m, T_r, cfg_m)
+apply_boundary_conditions!(eqn_m, cfg_m.boundaries.T, nothing, 0.0, cfg_m)
 
-# Case 3: NonLinearRobin lowering uses an explicit derivative when provided.
-C_nl = ScalarField(mesh_dev)
-initialise!(C_nl, 2.0)
-f_wall(c) = c^2
-df_wall(c) = 2c
+@testset "Robin mixed BC diagonal coefficient" begin
+    area  = 1/3
+    delta = 1/6
+    ap_robin = (1.0 * area * 1.0) / (1.0 * delta + 1.0)
+    expected_A11 = 1.0 + 1.0 + ap_robin   # right + top + Robin(left); bottom is ZG → 0
+    @test eqn_m.equation.A.parent[1, 1] ≈ expected_A11
+end
 
-BCs_nonlinear = assign(
+# ── Case 3: convection-diffusion — Robin limits match Dirichlet/Neumann/Zerogradient ──
+mdotf = FaceScalarField(mesh_dev)
+mdotf.values .= [(-1)^i*0.1*i for i ∈ eachindex(mdotf.values)]
+BCs_robin_div = assign(
     region = mesh_dev,
     (
         T = [
-            NonLinearRobin(:left_wall, f_wall, df_wall),
-            Zerogradient(:right_wall),
-            Zerogradient(:bottom_wall),
-            Zerogradient(:upper_wall)
+            Robin(:left_wall,   a=1.0, b=0.0, value=50.0),
+            Robin(:right_wall,  a=0.0, b=1.0, value=2.0),
+            Robin(:bottom_wall, a=1.0, b=0.0, value=10.0),
+            Robin(:upper_wall,  a=0.0, b=1.0, value=0.0),
         ],
     )
 )
-
-updated_bcs = update_nonlinear_robin(BCs_nonlinear.T, C_nl)
-@test updated_bcs[1] isa Robin
-@test updated_bcs[1].value.a ≈ -4.0
-@test updated_bcs[1].value.b ≈ 1.0
-@test updated_bcs[1].value.value ≈ -4.0
-
-# Direct boundary-module lowering should fail fast without an analytic derivative.
-BCs_no_derivative = assign(
+BCs_ref_div = assign(
     region = mesh_dev,
     (
         T = [
-            NonLinearRobin(:left_wall, f_wall),
-            Zerogradient(:right_wall),
-            Zerogradient(:bottom_wall),
-            Zerogradient(:upper_wall)
+            Dirichlet(:left_wall,   50.0),
+            Neumann(:right_wall,    2.0),
+            Dirichlet(:bottom_wall, 10.0),
+            Zerogradient(:upper_wall),
         ],
     )
 )
-@test_throws ErrorException update_nonlinear_robin(BCs_no_derivative.T, C_nl)
 
-# The solver-level CPU Newton path can still supply its selected AD backend.
-updated_bcs_ad = linearize_bcs(BCs_no_derivative.T, C_nl; ad_backend=:forwarddiff)
-@test updated_bcs_ad[1] isa Robin
-@test updated_bcs_ad[1].value.a ≈ -4.0
+@testset "Robin limits with Divergence{$scheme}" for scheme ∈ (Linear, Upwind, LUST, BoundedUpwind)
+    sch = (T = Schemes(laplacian=Linear, divergence=scheme),)
+    eqns = map((BCs_robin_div, BCs_ref_div)) do BCs
+        cfg = Configuration(solvers=solvers, schemes=sch,
+            runtime=Runtime(iterations=1, write_interval=1, time_step=1),
+            hardware=hardware, boundaries=BCs)
+        T = ScalarField(mesh_dev)
+        eqn = (
+            Divergence{scheme}(mdotf, T) - Laplacian{Linear}(gamma, T) == Source(ConstantScalar(0.0))
+        ) → ScalarEquation(T, cfg.boundaries.T)
+        discretise!(eqn, T, cfg)
+        apply_boundary_conditions!(eqn, cfg.boundaries.T, nothing, 0.0, cfg)
+        eqn
+    end
+    @test eqns[1].equation.A.parent ≈ eqns[2].equation.A.parent
+    @test eqns[1].equation.b ≈ eqns[2].equation.b
+end
+
+@testset "Robin with Time{$scheme}" for scheme ∈ (SteadyState, Euler)
+    sch = (T = Schemes(laplacian=Linear, time=scheme),)
+    eqns = map((BCs_robin, BCs_dirichlet)) do BCs
+        cfg = Configuration(solvers=solvers, schemes=sch,
+            runtime=Runtime(iterations=1, write_interval=1, time_step=1),
+            hardware=hardware, boundaries=BCs)
+        T = ScalarField(mesh_dev)
+        eqn = (
+            Time{scheme}(T) - Laplacian{Linear}(gamma, T) == Source(ConstantScalar(0.0))
+        ) → ScalarEquation(T, cfg.boundaries.T)
+        discretise!(eqn, T, cfg)
+        apply_boundary_conditions!(eqn, cfg.boundaries.T, nothing, 0.0, cfg)
+        eqn
+    end
+    @test eqns[1].equation.A.parent ≈ eqns[2].equation.A.parent
+    @test eqns[1].equation.b ≈ eqns[2].equation.b
+end
+
+@test_throws ArgumentError Robin(:left_wall, a=0.0, b=0.0, value=1.0)

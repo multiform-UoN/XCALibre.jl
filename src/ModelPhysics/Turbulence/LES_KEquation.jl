@@ -21,12 +21,13 @@ struct KEquation{S,SF,C} <: AbstractLESModel
 end
 Adapt.@adapt_structure KEquation
 
-struct KEquationModel{T,D,S1,S2, E1}
+struct KEquationModel{T,D,S1,S2,E1,WS}
     turbulence::T
     Δ::D 
     magS::S1
     k_eqn::E1
     state::S2
+    wall_scratch::WS
 end
 Adapt.@adapt_structure KEquationModel
 
@@ -102,8 +103,7 @@ function initialise(
         ) → eqn
 
     @reset k_eqn.preconditioner = set_preconditioner(solvers.k.preconditioner, k_eqn)
-    @reset k_eqn.solver = _workspace(solvers.k.solver, _b(k_eqn))
-    @reset k_eqn.setup = solvers.k
+    @reset k_eqn.solver = _workspace(solvers.k.solver, _b(k_eqn), _index_type(_A(k_eqn)))
     
     initial_residual = ((:k, 1.0),)
     return KEquationModel(
@@ -111,7 +111,8 @@ function initialise(
         Δ, 
         magS, 
         k_eqn,
-        ModelState(initial_residual, false)
+        ModelState(initial_residual, false),
+        wall_scratch(mesh, config.boundaries, config)
     ), config
 end
 
@@ -172,12 +173,12 @@ function turbulence!(
     # Solve k equation
     # prev .= k.values
     discretise!(k_eqn, k, config)
-    apply_boundary_conditions!(k_eqn, config; time=time)
+    apply_boundary_conditions!(k_eqn, boundaries.k, nothing, time, config)
     # implicit_relaxation!(k_eqn, k.values, solvers.k.relax, nothing, config)
     implicit_relaxation_diagdom!(k_eqn, k.values, solvers.k.relax, nothing, config)
     update_preconditioner!(k_eqn.preconditioner, mesh, config)
     k_res = solve_system!(k_eqn, solvers.k, k, nothing, config)
-    bound!(k, config)
+    bound!(k, prev, config)
     # explicit_relaxation!(k, prev, solvers.k.relax, config)
 
     wk = _setup(backend, workgroup, length(nut))[2]
@@ -187,7 +188,7 @@ function turbulence!(
 
     interpolate!(nutf, nut, config)
     correct_boundaries!(nutf, nut, boundaries.nut, time, config)
-    correct_eddy_viscosity!(nutf, boundaries.nut, model, config)
+    correct_eddy_viscosity!(nutf, boundaries.nut, model, config, les.wall_scratch)
 
     # update solver state
     state.residuals = ((:k , k_res),)

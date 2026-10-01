@@ -25,6 +25,7 @@ include("ModelPhysics/ModelPhysics.jl")
 include("Postprocess/Postprocess.jl")
 include("ReferenceFrames/ReferenceFrames.jl")
 include("Solvers/Solvers.jl")
+include("Distribute/Distribute.jl")
 include("Preprocess/Preprocess.jl")
 include("Mesh/BlockMesher2D/BlockMesher2D.jl")
 
@@ -42,6 +43,7 @@ using Reexport
 @reexport using XCALibre.Postprocess
 @reexport using XCALibre.ReferenceFrames
 @reexport using XCALibre.Solvers
+@reexport using XCALibre.Distribute
 @reexport using XCALibre.Preprocess
 @reexport using XCALibre.IOFormats
 @reexport using XCALibre.UNV3
@@ -51,11 +53,6 @@ using Reexport
 using StaticArrays, LinearAlgebra, SparseMatricesCSR, SparseArrays, LinearOperators
 using ProgressMeter, Printf, Adapt
 
-if get(ENV, "XCALIBRE_ENABLE_GENERATED_PRECOMPILE", "0") == "1"
-    include("precompile.jl")
-end
 
-# Stale PrecompileTools workload disabled in this development branch;
-# it referenced internal solver APIs that are not imported here.
 
 end # module

@@ -70,7 +70,7 @@ function monolithic_discretise!(
                 if isnothing(rho_prev)
                     rho_prev = ConstantScalar(one(eltype(prev)))
                 end
-                ac_sc, b_c = scheme_source!(term, cell, cID, cIndex_mono, prev, runtime, rho_prev)
+                ac_sc, b_c = scheme_source!(term, cells, cID, cIndex_mono, prev, runtime, rho_prev)
                 A_mono.nzval[cIndex_mono] += ac_sum + ac_sc
                 b_mono[row] += b_c
             end
@@ -152,8 +152,6 @@ function _monolithic_apply_bcs_impl!(
 
             for fID in 1:nbfaces
                 cellID = boundary_cellsID[fID]
-                face   = faces[fID]
-                cell   = cells[cellID]
 
                 # Monolithic diagonal index in block (i, j)
                 row      = row_off + cellID
@@ -166,7 +164,7 @@ function _monolithic_apply_bcs_impl!(
                         # cellID is LOCAL (1..n_cells) — needed by Extrapolated to
                         # access phi.values[cellID] correctly.
                         AP, BP = BC(term, A_mono.colval, A_mono.rowptr, A_mono.nzval,
-                                    cellID, zcellID, cell, face, fID, k, nothing, time)
+                                    cellID, zcellID, cells, faces, fID, k, nothing, time)
                         A_mono.nzval[zcellID] += AP
                         b_mono[row] += BP
                         break

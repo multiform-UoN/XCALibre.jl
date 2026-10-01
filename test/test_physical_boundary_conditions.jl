@@ -22,6 +22,8 @@
         original.delta,
         original.weight,
     )
+    faces = copy(mesh.faces)
+    faces[fID] = face
     wall_value = SVector(0.5, -0.5, 1.0)
     wall = Wall(1, wall_value, fID:fID)
     fixed = Dirichlet(1, wall_value, fID:fID)
@@ -37,6 +39,9 @@
     empty_indices = Int[]
     empty_values = Float64[]
 
+    laplacian_ap = -term.sign[1]*term.flux[fID]*face.area/face.delta
+    vn = dot(U[cID], normal)*normal
+
     for component in (XDir(), YDir(), ZDir())
         arguments = (
             term,
@@ -45,8 +50,8 @@
             empty_values,
             cID,
             cID,
-            mesh.cells[cID],
-            face,
+            mesh.cells,
+            faces,
             fID,
             1,
             component,
@@ -54,6 +59,9 @@
         )
         @test wall(arguments...) == fixed(arguments...)
         @test slip(arguments...) == symmetry(arguments...)
+
+        ac, su = slip(arguments...)
+        @test ac*U[cID][component.value] - su ≈ laplacian_ap*vn[component.value] atol=10eps(Float64)
     end
 
     Uf = FaceVectorField(mesh)
@@ -81,8 +89,8 @@
         empty_values,
         cID,
         cID,
-        mesh.cells[cID],
-        face,
+        mesh.cells,
+        faces,
         fID,
         1,
         nothing,
@@ -128,8 +136,8 @@
                 empty_values,
                 cID,
                 cID,
-                mesh.cells[cID],
-                face,
+                mesh.cells,
+                faces,
                 fID,
                 1,
                 component,
@@ -175,8 +183,8 @@
             empty_values,
             cID,
             cID,
-            mesh.cells[cID],
-            face,
+            mesh.cells,
+            faces,
             fID,
             1,
             nothing,

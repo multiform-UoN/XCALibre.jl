@@ -19,62 +19,68 @@ end
 
 @inline function (bc::Dirichlet)(
     term::Operator{F,P,S,ScalarGrad{T,I_ROW}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,I_ROW}
+    face = faces[fID]
     coeff = _scalargrad_coeff(term, face, fID, Val(I_ROW))
     return 0.0, -coeff * _boundary_face_value(bc, face, time, i, component)
 end
 
 @inline function (bc::DirichletFunction)(
     term::Operator{F,P,S,ScalarGrad{T,I_ROW}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,I_ROW}
+    face = faces[fID]
     coeff = _scalargrad_coeff(term, face, fID, Val(I_ROW))
     return 0.0, -coeff * _boundary_face_value(bc, face, time, i, component)
 end
 
 @inline function (bc::Dirichlet)(
     term::Operator{F,P,S,VectorDiv{T,J_COL}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,J_COL}
+    face = faces[fID]
     coeff = _vectordiv_coeff(term, face, fID, Val(J_COL))
     return 0.0, -coeff * _boundary_face_value(bc, face, time, i, component)
 end
 
 @inline function (bc::DirichletFunction)(
     term::Operator{F,P,S,VectorDiv{T,J_COL}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,J_COL}
+    face = faces[fID]
     coeff = _vectordiv_coeff(term, face, fID, Val(J_COL))
     return 0.0, -coeff * _boundary_face_value(bc, face, time, i, component)
 end
 
 @inline function (bc::Union{Zerogradient,Extrapolated,Outlet,Symmetry})(
     term::Operator{F,P,S,ScalarGrad{T,I_ROW}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,I_ROW}
+    face = faces[fID]
     coeff = _scalargrad_coeff(term, face, fID, Val(I_ROW))
     return coeff, 0.0
 end
 
 @inline function (bc::Union{Zerogradient,Extrapolated,Outlet,Symmetry})(
     term::Operator{F,P,S,VectorDiv{T,J_COL}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,J_COL}
+    face = faces[fID]
     coeff = _vectordiv_coeff(term, face, fID, Val(J_COL))
     return coeff, 0.0
 end
 
 @inline function (bc::Empty)(
     term::Operator{F,P,S,ScalarGrad{T,I_ROW}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,I_ROW}
     return 0.0, 0.0
 end
 
 @inline function (bc::Empty)(
     term::Operator{F,P,S,VectorDiv{T,J_COL}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,J_COL}
     return 0.0, 0.0
 end

@@ -47,7 +47,7 @@ Decomposes a `VectorEquation` into an array of `ScalarEquation`s, one for each s
 Vector-valued sources and boundary conditions are automatically extracted for the corresponding component.
 Operators inside the equation are re-bound to the scalar component fields (`psi.x`, `psi.y`, etc.).
 """
-function decompose(eqn::ModelEquation{VectorModel, M, E, S, P, ST}) where {M,E,S,P,ST}
+function decompose(eqn::ModelEquation{VectorModel, M, E, S, P}) where {M,E,S,P}
     psi = get_phi(eqn)
     comps = decompose(psi)
     bcs = get_bcs(eqn)
@@ -88,7 +88,7 @@ function decompose(eqn::ModelEquation{VectorModel, M, E, S, P, ST}) where {M,E,S
 end
 
 # Allow single ScalarEquation to pass through decompose safely
-function decompose(eqn::ModelEquation{ScalarModel, M, E, S, P, ST}) where {M,E,S,P,ST}
+function decompose(eqn::ModelEquation{ScalarModel, M, E, S, P}) where {M,E,S,P}
     return [eqn]
 end
 

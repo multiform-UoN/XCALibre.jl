@@ -24,13 +24,14 @@ Adapt.@adapt_structure Symmetry
 Symmetry(patch::Symbol) = Symmetry(patch, 0)
 
 @define_boundary Symmetry Laplacian{Linear} VectorField begin
-    (; area, delta, normal) = face
+    area, delta, normal = faces.area[fID], faces.delta[fID], faces.normal[fID]
     J = term.flux[fID]
     flux = J*area/delta
     ap = term.sign[1]*(-flux)
 
     vc = term.phi[cellID]
     vp = vc - (vc⋅normal)*normal
+    # ac = ap (not ap*nc^2) buys diagonal dominance; the deferred source cancels exactly at convergence
     ap, ap*vp[component.value]
 end
 
@@ -58,60 +59,19 @@ end
     max(ap, z), -min(ap, z)*get_values(term.phi, component)[cellID]
 end
 
-# Split the projected face value vc - (vc⋅n)n into an implicit same-component
-# contribution on outflow and explicit cross-component/inflow contributions.
 @define_boundary Symmetry Divergence{Linear} VectorField begin
-    (; normal) = face
     ap = term.sign*term.flux[fID]
-    vc = term.phi[cellID]
-    vp = vc - (vc⋅normal)*normal
-
-    nc = normal[component.value]
-    vc_c = vc[component.value]
-    vp_c = vp[component.value]
-    z = zero(ap)
-    one_minus_nc2 = one(nc) - nc^2
-
-    ac = max(ap, z)*one_minus_nc2
-    su_leaving = -max(ap, z)*(vp_c - vc_c*one_minus_nc2)
-    su_entering = -min(ap, z)*vp_c
-    ac, su_entering + su_leaving
+    _tangential_divergence(ap, term.phi[cellID], faces.normal[fID], component)
 end
 
 @define_boundary Symmetry Divergence{Upwind} VectorField begin
-    (; normal) = face
     ap = term.sign*term.flux[fID]
-    vc = term.phi[cellID]
-    vp = vc - (vc⋅normal)*normal
-
-    nc = normal[component.value]
-    vc_c = vc[component.value]
-    vp_c = vp[component.value]
-    z = zero(ap)
-    one_minus_nc2 = one(nc) - nc^2
-
-    ac = max(ap, z)*one_minus_nc2
-    su_leaving = -max(ap, z)*(vp_c - vc_c*one_minus_nc2)
-    su_entering = -min(ap, z)*vp_c
-    ac, su_entering + su_leaving
+    _tangential_divergence(ap, term.phi[cellID], faces.normal[fID], component)
 end
 
 @define_boundary Symmetry Divergence{LUST} VectorField begin
-    (; normal) = face
     ap = term.sign*term.flux[fID]
-    vc = term.phi[cellID]
-    vp = vc - (vc⋅normal)*normal
-
-    nc = normal[component.value]
-    vc_c = vc[component.value]
-    vp_c = vp[component.value]
-    z = zero(ap)
-    one_minus_nc2 = one(nc) - nc^2
-
-    ac = max(ap, z)*one_minus_nc2
-    su_leaving = -max(ap, z)*(vp_c - vc_c*one_minus_nc2)
-    su_entering = -min(ap, z)*vp_c
-    ac, su_entering + su_leaving
+    _tangential_divergence(ap, term.phi[cellID], faces.normal[fID], component)
 end
 
 # Scalars cancel exactly. A vector leaves the difference between its tangential
@@ -121,7 +81,7 @@ end
 end
 
 @define_boundary Symmetry Divergence{BoundedUpwind} VectorField begin
-    (; normal) = face
+    normal = faces.normal[fID]
     ap = term.sign*term.flux[fID]
     vc = term.phi[cellID]
     vn = (vc⋅normal)*normal

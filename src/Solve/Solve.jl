@@ -19,6 +19,8 @@ import Krylov
 using StaticArrays: StaticArray
 
 using XCALibre.Multithread
+using XCALibre.Multithread: _sized
+import XCALibre.Multithread: XVector, _foreach_chunk
 using XCALibre.Mesh
 using XCALibre.Fields
 using XCALibre.ModelFramework

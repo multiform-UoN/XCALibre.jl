@@ -37,7 +37,7 @@ Adapt.@adapt_structure KOmegaLKE
 
 # Model type definition (hold equation definitions and internal data)
 struct KOmegaLKEModel{
-    T,E1,E2,E3,F1,F2,F3,S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,V1,V2,State}
+    T,E1,E2,E3,F1,F2,F3,S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,V1,V2,State,WS}
     turbulence::T
     k_eqn::E1
     ω_eqn::E2
@@ -58,6 +58,7 @@ struct KOmegaLKEModel{
     ∇k::V1
     ∇ω::V2
     state::State
+    wall_scratch::WS
 end 
 Adapt.@adapt_structure KOmegaLKEModel
 
@@ -151,7 +152,7 @@ function initialise(
     # unpack turbulent quantities and configuration
     (; k, omega, kl, kf, omegaf, klf, y) = model.turbulence
     (; solvers, schemes, runtime, boundaries) = config
-    mesh = mdotf.mesh
+    mesh = model.domain
     eqn = peqn.equation
 
     nueffkLS = ScalarField(mesh)
@@ -218,12 +219,9 @@ function initialise(
     
     # preallocating solvers
 
-    @reset kl_eqn.solver = _workspace(solvers.kl.solver, _b(kl_eqn))
-    @reset kl_eqn.setup = solvers.kl
-    @reset k_eqn.solver = _workspace(solvers.k.solver, _b(k_eqn))
-    @reset k_eqn.setup = solvers.k
-    @reset ω_eqn.solver = _workspace(solvers.omega.solver, _b(ω_eqn))
-    @reset ω_eqn.setup = solvers.omega
+    @reset kl_eqn.solver = _workspace(solvers.kl.solver, _b(kl_eqn), _index_type(_A(kl_eqn)))
+    @reset k_eqn.solver = _workspace(solvers.k.solver, _b(k_eqn), _index_type(_A(k_eqn)))
+    @reset ω_eqn.solver = _workspace(solvers.omega.solver, _b(ω_eqn), _index_type(_A(ω_eqn)))
 
     TF = _get_float(mesh)
     time = zero(TF) # assuming time=0
@@ -258,7 +256,8 @@ function initialise(
         ReLambda,
         ∇k,
         ∇ω,
-        state
+        state,
+        wall_scratch(mesh, boundaries, config)
     ), new_config
 end
 
@@ -285,10 +284,11 @@ function turbulence!(
     mesh = model.domain
     (; momentum) = model
     (; k, omega, kl, nut, y, kf, omegaf, klf, nutf, coeffs, Tu) = rans.turbulence
-    (; nu) = model.fluid
+    (; nu, nuf) = model.fluid
+    (; boundary_cellsID) = mesh
     (; U, Uf, gradU) = S
     
-    (; k_eqn, ω_eqn, kl_eqn, nueffkLS, nueffkS, nueffωS, nuL, nuts, Ω, γ, ∇k, ∇ω, normU, divU, S2, ReLambda, state) = rans
+    (; k_eqn, ω_eqn, kl_eqn, nueffkLS, nueffkS, nueffωS, nuL, nuts, Ω, γ, ∇k, ∇ω, normU, divU, S2, ReLambda, state, wall_scratch) = rans
     (; solvers, runtime, boundaries) = config
 
     nueffkL = get_flux(kl_eqn, 3)
@@ -323,7 +323,8 @@ function turbulence!(
         S_dev = 0.5*(g + g') - divU_val/3*I # Dev(S)
         S2[i] = 2.0 * sum(S_dev.^2) # S2 = 2*magSqr(dev(symm(gradU)))
         Ω[i] = sqrt(2.0 * sum((0.5*(g - g')).^2)) # Omega = sqrt(2)*mag(skew(gradU))
-        Pk[i] = sum(g .* 2*S_dev) # Pk = gradU && dev(twoSymm(gradU))
+        # g .* 2*S_dev parses as (g .* 2)*S_dev, a matrix product; the double contraction needs the brackets
+        Pk[i] = 2.0*sum(g .* S_dev) # Pk = gradU && dev(twoSymm(gradU))
 
         # Calculate velocity magnitude
         u = U[i]
@@ -360,16 +361,22 @@ function turbulence!(
     end
 
     interpolate!(nueffkL, nueffkLS, config)
-    correct_boundaries!(nueffkL, nueffkLS, boundaries.nut, time, config)
+    # Boundary faces use the boundary values of kl, k and omega (gamma from the owner cell), not the
+    # nut boundary conditions: a low-Re wall has nut = 0, which would remove the viscous wall flux.
+    correct_boundaries!(klf, kl, boundaries.kl, time, config)
+    xcal_foreach(boundary_cellsID, config) do fID
+        cID = boundary_cellsID[fID]
+        nueffkL[fID] = nuf[fID] + coeffs.σkL * sqrt(max(klf[fID], 0.0)) * y[cID]
+    end
 
     # Solve kl equation
     prev .= kl.values
     discretise!(kl_eqn, prev, config)
-    apply_boundary_conditions!(kl_eqn, config; time=time)
+    apply_boundary_conditions!(kl_eqn, boundaries.kl, nothing, time, config)
     implicit_relaxation!(kl_eqn, kl.values, solvers.kl.relax, nothing, config)
     update_preconditioner!(kl_eqn.preconditioner, mesh, config)
     kl_res = solve_system!(kl_eqn, solvers.kl, kl, nothing, config)
-    bound!(kl, config)
+    bound!(kl, prev, config)
 
     # Calculate Gradients for Cross-Diffusion  
     grad!(∇ω, omegaf, omega, boundaries.omega, time, config)
@@ -384,22 +391,27 @@ function turbulence!(
         Pω[i] = coeffs.Cω1 * Pk[i] # production
         Pω[i] -= (2.0/3.0) * coeffs.Cω1 * divU[i] * omega_i # desctruction
         Dωf[i] = coeffs.Cω2 * omega_i # dissipation
-        nueffωS[i] = nu[i] + coeffs.σω * (k[i] / safe_omega) # diffusion
+        nueffωS[i] = nu[i] + coeffs.σω * γ[i] * (k[i] / safe_omega) # diffusion (Medina et al. 2018, Eq. 23)
         dkdomegadx[i] = max((coeffs.σd / (safe_omega^2)) * dkdomegadx[i], 0.0) # x-diffusion
     end
 
     interpolate!(nueffω, nueffωS, config)
-    correct_boundaries!(nueffω, nueffωS, boundaries.nut, time, config)
+    correct_boundaries!(kf, k, boundaries.k, time, config)
+    correct_boundaries!(omegaf, omega, boundaries.omega, time, config)
+    xcal_foreach(boundary_cellsID, config) do fID
+        cID = boundary_cellsID[fID]
+        nueffω[fID] = nuf[fID] + coeffs.σω * γ[cID] * max(kf[fID], 0.0) / max(omegaf[fID], 1e-15)
+    end
 
     # Solve omega equation
     prev .= omega.values
     discretise!(ω_eqn, prev, config)
-    apply_boundary_conditions!(ω_eqn, config; time=time)
+    apply_boundary_conditions!(ω_eqn, boundaries.omega, nothing, time, config)
     implicit_relaxation!(ω_eqn, omega.values, solvers.omega.relax, nothing, config)
-    constrain_equation!(ω_eqn, boundaries.omega, model, config) 
+    constrain_equation!(ω_eqn, boundaries.omega, model, config, wall_scratch) 
     update_preconditioner!(ω_eqn.preconditioner, mesh, config)
     ω_res = solve_system!(ω_eqn, solvers.omega, omega, nothing, config)
-    bound!(omega, config)
+    bound!(omega, prev, config)
 
     # Calculate fv and setup k equation (fused)
     xcal_foreach(k, config) do i
@@ -421,21 +433,25 @@ function turbulence!(
         Dkf[i] = coeffs.Cμ * gamma_val * omega_i
 
         # Diffusion
-        nueffkS[i] = nu[i] + coeffs.σk * (safe_k / safe_omega)
+        nueffkS[i] = nu[i] + coeffs.σk * gamma_val * (safe_k / safe_omega) # Medina et al. 2018, Eq. 22
     end
 
     interpolate!(nueffk, nueffkS, config)
-    correct_boundaries!(nueffk, nueffkS, boundaries.nut, time, config)
-    correct_production!(Pk, boundaries.k, model, S.gradU, config)
+    correct_boundaries!(omegaf, omega, boundaries.omega, time, config) # omega was just solved
+    xcal_foreach(boundary_cellsID, config) do fID
+        cID = boundary_cellsID[fID]
+        nueffk[fID] = nuf[fID] + coeffs.σk * γ[cID] * max(kf[fID], 0.0) / max(omegaf[fID], 1e-15)
+    end
+    correct_production!(Pk, boundaries.k, model, S.gradU, config, wall_scratch)
 
     # Solve k equation
     prev .= k.values
     discretise!(k_eqn, prev, config)
-    apply_boundary_conditions!(k_eqn, config; time=time)
+    apply_boundary_conditions!(k_eqn, boundaries.k, nothing, time, config)
     implicit_relaxation!(k_eqn, k.values, solvers.k.relax, nothing, config)
     update_preconditioner!(k_eqn.preconditioner, mesh, config)
     k_res = solve_system!(k_eqn, solvers.k, k, nothing, config)
-    bound!(k, config)
+    bound!(k, prev, config)
 
     # Calculate Final nutL and nut
     xcal_foreach(nut, config) do i
@@ -467,7 +483,7 @@ function turbulence!(
 
     interpolate!(nutf, nut, config)
     correct_boundaries!(nutf, nut, boundaries.nut, time, config)
-    correct_eddy_viscosity!(nutf, boundaries.nut, model, config)
+    correct_eddy_viscosity!(nutf, boundaries.nut, model, config, wall_scratch)
 
     # Update Residuals and Convergence Status 
     residuals = ((:k, k_res),(:kl, kl_res),(:omega, ω_res))

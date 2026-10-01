@@ -3,10 +3,11 @@ test_grids_dir = pkgdir(XCALibre, "test", "grids")
 function test_mesh_precision(mesh, integer_type, float_type)
     @test eltype(mesh.get_int) === integer_type
     @test eltype(mesh.get_float) === float_type
+    @test length(mesh.get_int) == length(mesh.get_float) == 1
     @test eltype(mesh.cell_nodes) === integer_type
     @test eltype(mesh.cell_faces) === integer_type
     @test eltype(mesh.cell_neighbours) === integer_type
-    @test eltype(mesh.cell_nsign) === integer_type
+    @test eltype(mesh.cell_nsign) === Int8
     @test eltype(mesh.face_nodes) === integer_type
     @test eltype(mesh.node_cells) === integer_type
     @test eltype(mesh.boundary_cellsID) === integer_type
@@ -57,6 +58,27 @@ msg = IOBuffer(); println(msg, mesh)
 outputTest_FOAM3D = String(take!(msg))
 
 @test outputTest_FOAM3D == "3D Mesh with:\n-> 125 cells\n-> 450 faces\n-> 216 nodes\n"
+
+@testset "boundary assignment requires each patch exactly once" begin
+    valid = assign(
+        region=mesh,
+        (T=[Dirichlet(:walls, 0.0), Dirichlet(:top, 1.0)],),
+    )
+    @test getproperty.(valid.T, :ID) == (1, 2)
+
+    duplicate_error = try
+        assign(
+            region=mesh,
+            (T=[Dirichlet(:walls, 0.0), Dirichlet(:walls, 1.0)],),
+        )
+        nothing
+    catch error
+        error
+    end
+    @test duplicate_error isa ArgumentError
+    @test contains(sprint(showerror, duplicate_error), "missing top")
+    @test contains(sprint(showerror, duplicate_error), "assigned more than once walls")
+end
 
 @testset "OpenFOAM boundary groups are ignored" begin
     boundaries = XCALibre.FoamMesh.read_boundary(
@@ -180,27 +202,6 @@ end
     end
 end
 
-@testset "boundary assignment requires each patch exactly once" begin
-    valid = assign(
-        region=mesh,
-        (T=[Dirichlet(:walls, 0.0), Dirichlet(:top, 1.0)],),
-    )
-    @test getproperty.(valid.T, :ID) == (1, 2)
-
-    duplicate_error = try
-        assign(
-            region=mesh,
-            (T=[Dirichlet(:walls, 0.0), Dirichlet(:walls, 1.0)],),
-        )
-        nothing
-    catch error
-        error
-    end
-    @test duplicate_error isa ArgumentError
-    @test contains(sprint(showerror, duplicate_error), "missing top")
-    @test contains(sprint(showerror, duplicate_error), "assigned more than once walls")
-end
-
 # Test 3D UNV and FOAM meshes are equal
 @test outputTest_UNV3D == outputTest_FOAM3D
 @test getproperty.(unv3_mesh.cells, :centre) ≈ getproperty.(foam3_mesh.cells, :centre)
@@ -234,6 +235,39 @@ end
     end
 end
 
+@testset "OpenFOAM writer rewrites a mismatched mesh" begin
+    mktempdir() do directory
+        cd(directory) do
+            mesh_directory = joinpath("constant", "polyMesh")
+            mkpath(mesh_directory)
+            # the note holds the matching count, so a naive first-integer parser would pass
+            write(joinpath(mesh_directory, "points"), """
+            FoamFile
+            {
+                version     2.0;
+                format      ascii;
+                class       vectorField;
+                note        "nPoints: 216 nCells: 125";
+                object      points;
+            }
+
+            8
+            (
+            (0 0 0)
+            )
+            """)
+            for name in ("faces", "owner", "neighbour", "boundary")
+                write(joinpath(mesh_directory, name), "sentinel-$name")
+            end
+
+            @test_logs (:warn, r"does not match") (:info, r"Writing mesh") match_mode=:any XCALibre.initialise_writer(OpenFOAM(), foam3_mesh)
+            written_mesh = FOAM3D_mesh(mesh_directory)
+            @test length(written_mesh.nodes) == length(foam3_mesh.nodes)
+            @test length(written_mesh.faces) == length(foam3_mesh.faces)
+        end
+    end
+end
+
 precision_cases = (
     (Int32, Float32),
     (Int64, Float32),
@@ -257,7 +291,26 @@ for (name, converter, meshFile) in mesh_converters
             )
             test_mesh_precision(mesh, integer_type, float_type)
         end
+        @test XCALibre.Mesh._get_int(converter(meshFile; scale=0.001)) === Int32
     end
+end
+
+@testset "index capacity" begin
+    M = XCALibre.Mesh
+    @test M._check_index_capacity(Int32, typemax(Int32), "n")
+    @test_throws ArgumentError M._check_index_capacity(Int32, Int64(typemax(Int32)) + 1, "n")
+    @test_throws ArgumentError M._with_index_capacity(() -> Int32(Int64(2)^40), Int32)
+    @test_throws InexactError M._with_index_capacity(() -> Int64(1.5), Int64)
+    @test M._with_index_capacity(() -> 7, Int32) == 7
+    # totals past typemax(Int32) are refused before any Int32 offset or cursor can wrap
+    big = Int64(typemax(Int32)) + 1
+    F, U = XCALibre.FoamMesh, XCALibre.UNV3
+    @test_throws ArgumentError F.connect_cell_faces(
+        (n_cells=1, n_ifaces=big ÷ 2, n_bfaces=0, face_owner=Int32[], face_neighbour=Int32[]), Int32, Float64)
+    @test_throws ArgumentError F.connect_cell_nodes((n_cells=1, face_nodes=Int32[], face_owner=Int32[1],
+        face_neighbour=Int32[1], face_nodes_range=[Int32(1):typemax(Int32)], points=[]), Int32, Float64)
+    @test_throws ArgumentError U._compute_flat_offsets(Int32[typemax(Int32), 1])
+    @test U._compute_flat_offsets(Int32[2, 3])[3] == 5
 end
 
 @testset "single precision mesh validation" begin
@@ -275,4 +328,21 @@ end
         cell.faces_range,
     )
     @test_throws ArgumentError XCALibre.Mesh.validate_single_precision_mesh(mesh; source="test")
+end
+
+@testset "mesh element views" begin
+    mesh = UNV2D_mesh(joinpath(test_grids_dir, "quad40.unv"), scale=0.001)
+    @test XCALibre.KernelAbstractions.get_backend(mesh.cells) isa XCALibre.CPU
+    @test XCALibre.KernelAbstractions.get_backend(mesh.faces) isa XCALibre.CPU
+    @test all(s -> s ∈ propertynames(mesh), (:cells, :faces, :nodes, :cell_volume, :face_area))
+end
+
+@testset "OpenFOAM field dimensions" begin
+    dims(label, labels=()) = XCALibre.IOFormats._foam_dimensions(label, labels)
+    @test dims("U") == "dimensions      [0 1 -1 0 0 0 0];\n"
+    @test dims("p") == "dimensions      [0 2 -2 0 0 0 0];\n"
+    @test dims("p", ("U", "p", "rho", "T")) == "dimensions      [1 -1 -2 0 0 0 0];\n"
+    @test dims("T") == "dimensions      [0 0 0 1 0 0 0];\n"
+    @test dims("omega") == "dimensions      [0 0 -1 0 0 0 0];\n"
+    @test dims("alpha") == "dimensions      [0 0 0 0 0 0 0];\n"
 end

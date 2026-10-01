@@ -24,7 +24,7 @@ Adapt.@adapt_structure Wall
 Wall(name::Symbol) = Wall(name, 0)
 
 @define_boundary Wall Laplacian{Linear} VectorField begin
-    (; area, delta) = face
+    area, delta = faces.area[fID], faces.delta[fID]
     J = term.flux[fID]
     flux = J*area/delta
     ap = term.sign[1]*(-flux)
@@ -32,13 +32,6 @@ Wall(name::Symbol) = Wall(name, 0)
 end
 
 @define_boundary Wall Laplacian{Linear} ScalarField begin
-    # phi = term.phi 
-    # values = get_values(phi, component)
-    # J = term.flux[fID]
-    # (; area, delta) = face 
-    # flux = -J*area/delta
-    # ap = term.sign*(flux)
-    # ap, ap*values[cellID] # original
     0.0, 0.0 # try this
     # 0.0, -flux*delta*bc.value # draft implementation to test!
 end

@@ -1,12 +1,36 @@
 export discretise!, update_equation!, assemble_matrix!, assemble_rhs!, explicit_residual!
 
+# NEW SECTION: kernel arguments
+# Kernel arguments are copied by value into per-thread local memory, so terms, sources and fields
+# reach the discretise kernels without their mesh; phi keeps only the face_gDiff column schemes read.
+_kernel_field(f, m=()) = f
+_kernel_field(f::ScalarField, m=()) = ScalarField(f.values, m)
+_kernel_field(f::FaceScalarField, m=()) = FaceScalarField(f.values, m)
+_kernel_field(f::VectorField, m=()) = VectorField(_kernel_field(f.x), _kernel_field(f.y), _kernel_field(f.z), m)
+_kernel_field(f::FaceVectorField, m=()) =
+    FaceVectorField(_kernel_field(f.x), _kernel_field(f.y), _kernel_field(f.z), m)
+
+_kernel_term(t::Operator, m) =
+    Operator(_kernel_field(t.flux), _kernel_field(t.phi, m), t.sign, t.type)
+_kernel_term(t::NonlinearOperator, m) = NonlinearOperator(_kernel_term(t.op, m), t.map)
+_kernel_term(t::AffineOperator, m) = AffineOperator(
+    _kernel_term(t.op, m), _kernel_field(t.jacobian), _kernel_field(t.offset),
+    _kernel_field(t.reference), t.map)
+
+_kernel_model(model, mesh) = begin
+    m = (; face_gDiff=mesh.face_gDiff)
+    terms = map(t -> _kernel_term(t, m), model.terms)
+    sources = map(s -> Src(_kernel_field(s.field), s.sign), model.sources)
+    terms, sources
+end
+
 function discretise!(
     eqn::ModelEquation{T,M,E,S,P}, prev, config; rho_prev=_get_flux(eqn.model.terms[1])) where {T<:VectorModel,M,E,S,P}
     (; hardware, runtime) = config
     (; backend, workgroup) = hardware
 
     # Retrieve variabels for defition
-    mesh = get_phi(eqn).mesh
+    mesh = _term_phi(eqn.model.terms[1]).mesh
     model = eqn.model
 
     # Sparse array and b accessor call
@@ -17,39 +41,31 @@ function discretise!(
     # Sparse array fields accessors
     nzval = _nzval(A)
     nzval0 = _nzval(A0)
-    colval = _colval(A)
-    rowptr = _rowptr(A)
+    (; diag_nz, face_nz) = eqn.equation
 
-    # reset storage of sparse matrix
-    z = zero(eltype(nzval))
-    xcal_foreach(nzval, config) do i
-        nzval0[i] = z
-    end
+    _pattern_extended(nzval0, mesh) && fill_nzval!(nzval0, config)
 
-
-    # Call discretise kernel
-    ndrange = length(mesh.cells)
-    kernel! = _discretise_vector_model!(_setup(backend, workgroup, ndrange)...)
-    kernel!(model, model.terms, model.sources, mesh, nzval0, nzval, colval, rowptr, bx, by, bz, prev, runtime, rho_prev)
-    # KernelAbstractions.synchronize(backend)
+    terms, sources = _kernel_model(model, mesh)
+    (; cells, faces, cell_faces, cell_neighbours, cell_nsign) = mesh
+    ndrange = length(cells)
+    kernel! = _sized(_discretise_vector_model!, backend, workgroup, ndrange)
+    kernel!(terms, sources, cells, faces, cell_faces, cell_neighbours, cell_nsign, nzval0,
+        diag_nz, face_nz, bx, by, bz, _kernel_field(prev), runtime, _kernel_field(rho_prev))
+    # # KernelAbstractions.synchronize(backend)
 end
 
-# @kernel function _discretise_vector_model!(
-#     model::Model{TN,SN,T,S}, terms, sources, mesh, nzval0::AbstractArray{F}, nzval, colval, rowptr, bx, by, bz, prev, runtime) where {TN,SN,T,S,F}
 @kernel function _discretise_vector_model!(
-    model::Model{TN,SN,T,S}, terms::TERMS, sources::SRCS, mesh, nzval0::AbstractArray{F}, nzval, colval, rowptr, bx, by, bz, prev, runtime, rho_prev) where {TN,SN,T,S,F,TERMS,SRCS}
+    terms::TERMS, sources::SRCS, cells, faces, cell_faces, cell_neighbours, cell_nsign,
+    nzval0::AbstractArray{F}, diag_nz, face_nz, bx, by, bz, prev, runtime, rho_prev) where {F,TERMS,SRCS}
     i = @index(Global)
-    # Extract mesh fields for kernel
-    (; faces, cells, cell_faces, cell_neighbours, cell_nsign) = mesh
 
     @inbounds begin
         # Define workitem cell and extract required fields
-        cell = cells[i]
-        (; faces_range, volume) = cell
+        faces_range = cells.faces_range[i]
+        volume = cells.volume[i]
 
 
-        # Set index for sparse array values on diagonal
-        cIndex = spindex(rowptr, colval, i, i)
+        cIndex = diag_nz[i]
 
         # For loop over workitem cell faces
         ac_sum = zero(F)
@@ -57,32 +73,28 @@ end
             # Retrieve indices for discretisation
             fID = cell_faces[fi]
             ns = cell_nsign[fi] # normal sign
-            face = faces[fID]
             nID = cell_neighbours[fi]
-            cellN = cells[nID]
-
-            # Set index for sparse array values at workitem cell neighbour index
-            nIndex = spindex(rowptr, colval, i, nID)
+            nIndex = face_nz[fi]
 
 
             # Call scheme generated fucntion
-            ac, an, _ = _scheme!(model, terms, nzval0, cell, face,  cellN, ns, i, nID, cIndex, nIndex, fID, prev, runtime)
+            ac, an, _ = _scheme!(terms, nzval0, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
             ac_sum += ac
             nzval0[nIndex] = an
 
         end
 
-
+        
         # Call scheme source generated function NEEDS UPDATING!
-        ac, bx1, by1, bz1 = _scheme_source!(model, terms, cell, i, cIndex, prev, runtime, rho_prev)
-
+        ac, bx1, by1, bz1 = _scheme_source!(terms, cells, i, cIndex, prev, runtime, rho_prev)
+        
         nzval0[cIndex] = ac_sum + ac
 
         # Call sources generated function
-        bx2, by2, bz2 = _sources!(model, sources, volume, i)
+        bx2, by2, bz2 = _sources!(sources, volume, i)
         bx[i] = bx1 + bx2
         by[i] = by1 + by2
-        bz[i] = bz1 + bz2
+        bz[i] = bz1 + bz2 
     end
 end
 
@@ -93,7 +105,7 @@ function discretise!(
     (; backend, workgroup) = hardware
 
     # Retrieve variabels for defition
-    mesh = get_phi(eqn).mesh
+    mesh = _term_phi(eqn.model.terms[1]).mesh
     model = eqn.model
 
     # Sparse array and b accessor call
@@ -102,87 +114,89 @@ function discretise!(
 
     # Sparse array fields accessors
     nzval = _nzval(A)
-    colval = _colval(A)
-    rowptr = _rowptr(A)
+    (; diag_nz, face_nz) = eqn.equation
 
-    # reset storage of sparse matrix
+    _pattern_extended(nzval, mesh) && fill_nzval!(nzval, config)
+
+    terms, sources = _kernel_model(model, mesh)
+    (; cells, faces, cell_faces, cell_neighbours, cell_nsign) = mesh
+    ndrange = length(cells)
+    kernel! = _sized(_discretise_scalar_model!, backend, workgroup, ndrange)
+    kernel!(terms, sources, cells, faces, cell_faces, cell_neighbours, cell_nsign, nzval,
+        diag_nz, face_nz, b, _kernel_field(prev), runtime, _kernel_field(rho_prev))
+    # # KernelAbstractions.synchronize(backend)
+end
+
+# the kernels assign every diagonal and one entry per cell face, which is the whole pattern unless a
+# boundary condition added entries (periodic) or two faces share a cell pair; only then is a reset needed
+_pattern_extended(nzval, mesh) = length(nzval) != length(mesh.cells) + length(mesh.cell_faces)
+
+fill_nzval!(nzval, config) = begin
     z = zero(eltype(nzval))
     xcal_foreach(nzval, config) do i
         nzval[i] = z
     end
-
-
-    # Call discretise kernel
-    ndrange = length(mesh.cells)
-    kernel! = _discretise_scalar_model!(_setup(backend, workgroup, ndrange)...)
-    kernel!(model, model.terms, model.sources, mesh, nzval, colval, rowptr, b, prev, runtime, rho_prev)
-    # KernelAbstractions.synchronize(backend)
 end
 
-# Discretise kernel function
-# @kernel function _discretise_scalar_model!(
-#     model::Model{TN,SN,T,S}, terms, sources, mesh, nzval::AbstractArray{F}, colval, rowptr, b, prev, runtime) where {TN,SN,T,S,F}
 @kernel function _discretise_scalar_model!(
-    model::Model{TN,SN,T,S}, terms::TERMS, sources::SRCS, mesh, nzval::AbstractArray{F}, colval, rowptr, b, prev, runtime, rho_prev) where {TN,SN,T,S,F,TERMS,SRCS}
+    terms::TERMS, sources::SRCS, cells, faces, cell_faces, cell_neighbours, cell_nsign,
+    nzval::AbstractArray{F}, diag_nz, face_nz, b, prev, runtime, rho_prev) where {F,TERMS,SRCS}
 
     i = @index(Global)
-    # Extract mesh fields for kernel
-    (; faces, cells, cell_faces, cell_neighbours, cell_nsign) = mesh
 
     @inbounds begin
         # Define workitem cell and extract required fields
-        cell = cells[i]
-        (; faces_range, volume) = cell
+        faces_range = cells.faces_range[i]
+        volume = cells.volume[i]
 
-        # Set index for sparse array values on diagonal!
-        cIndex = spindex(rowptr, colval, i, i)
-        b[i] = zero(F)
+        cIndex = diag_nz[i]
 
         # For loop over workitem cell faces
         ac_sum = zero(F)
+        b_face = zero(F)
         for fi in faces_range
             # Retrieve indices for discretisation
             fID = cell_faces[fi]
             ns = cell_nsign[fi] # normal sign
-            face = faces[fID]
             nID = cell_neighbours[fi]
-            cellN = cells[nID]
-
-            # Set index for sparse array values at workitem cell neighbour index
-            nIndex = spindex(rowptr, colval, i, nID)
+            nIndex = face_nz[fi]
 
             # Call scheme generated fucntion
-            ac, an, bface = _scheme!(model, terms, nzval, cell, face,  cellN, ns, i, nID, cIndex, nIndex, fID, prev, runtime)
+            ac, an, bf = _scheme!(terms, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
             ac_sum += ac
+            b_face += bf
             nzval[nIndex] = an
-            b[i] += bface
         end
-
+        
         # Call scheme source generated function
-        ac, b1 = _scheme_source!(model, terms, cell, i, cIndex, prev, runtime, rho_prev)
+        ac, b1 = _scheme_source!(terms, cells, i, cIndex, prev, runtime, rho_prev)
         nzval[cIndex] = ac_sum + ac
 
         # Call sources generated function
-        b2 = _sources!(model, sources, volume, i)
-        b[i] += b2 + b1
+        b2 = _sources!(sources, volume, i)
+        b[i] = b2 + b1 + b_face
     end
 end
 
 return_quote(x, t) = :(nothing)
 
 # Scheme generated function definition
-# @generated function _scheme!(model::Model{TN,SN,T,S}, terms, nzval, cell, face,  cellN, ns, cIndex, nIndex, fID, prev, runtime) where {TN,SN,T,S}
-@generated function _scheme!(model::Model{TN,SN,T,S}, terms::TERMS, nzval::AbstractArray{F}, cell, face,  cellN, ns, cID, nID, cIndex, nIndex, fID, prev, runtime) where {TN,SN,T,S,TERMS,F}
+@generated function _scheme!(
+    terms::TERMS, nzval::AbstractArray{F}, cells, faces,
+    nID, ns, cIndex, nIndex, fID, prev, runtime
+    ) where {TERMS,F}
+    TN = fieldcount(TERMS)
     # Allocate expression array to store scheme function
     out = Expr(:block)
 
     # Loop over number of terms and store scheme function in array
     for t in 1:TN
         function_call_scheme = quote
-            ac, an, b = scheme_contribution!(terms[$t], nzval, cell, face,  cellN, ns, cID, nID, cIndex, nIndex, fID, prev, runtime)
+            ac, an = scheme!(terms[$t], nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
+            bf = _scheme_face_rhs(terms[$t], nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
             AC += F(ac)
             AN += F(an)
-            B += F(b)
+            B += F(bf)
         end
         push!(out.args, function_call_scheme)
     end
@@ -197,32 +211,17 @@ return_quote(x, t) = :(nothing)
     end
 end
 
-# Strip scalar wrappers used by operator algebra before classifying a source as
-# scalar or vector. Keeping this at the type level preserves generated GPU code.
-_unscaled_flux_type(::Type{ScaledFlux{F,V}}) where {F,V} = _unscaled_flux_type(F)
-_unscaled_flux_type(::Type{F}) where {F} = F
-
 # Scheme source generated function definition
-@generated function _scheme_source!(model::Model{TN,SN,T,S}, terms::TERMS, cell::Cell{F}, cID, cIndex, prev, runtime, rho_prev) where {TN,SN,T,S,TERMS,F}
+@generated function _scheme_source!(terms::TERMS, cells::AbstractVector{<:Cell{F}}, cID, cIndex, prev::P, runtime, rho_prev) where {TERMS,F,P}
+    TN = fieldcount(TERMS)
     # Allocate expression array to store scheme_source function
     out = Expr(:block)
-
-    # Determine scalar vs vector model.
-    # When SN>0 use source field type; when SN==0 fall back to first term's phi type.
-    # (S = Tuple{} when no sources, so S.parameters[1] would throw for SN==0.)
-    phi_field_type = if SN > 0
-        _unscaled_flux_type(S.parameters[1].parameters[1])
-    elseif TN > 0
-        T.parameters[1].parameters[2]  # Operator{F, P, I, Type} → P is the phi field
-    else
-        AbstractScalarField  # empty model: default to scalar path
-    end
-
+    
     # Loop over number of terms and store scheme_source function in array
-    if phi_field_type <: AbstractScalarField
+    if !(P <: AbstractVectorField)
         for t in 1:TN
             function_call_scheme_source = quote
-                ac, b = scheme_source!(terms[$t], cell, cID, cIndex, prev, runtime, rho_prev)
+                ac, b = scheme_source!(terms[$t], cells, cID, cIndex, prev, runtime, rho_prev)
                 AC += F(ac)
                 B += F(b)
             end
@@ -230,17 +229,19 @@ _unscaled_flux_type(::Type{F}) where {F} = F
         end
         return quote
             z = zero(F)
+            ac = z
+            b = z
             AC = z
             B = z
             $(out.args...)
             return AC, B
         end
-    elseif phi_field_type <: AbstractVectorField
+    else
         for t in 1:TN
             function_call_scheme_source = quote
-                ac, bx = scheme_source!(terms[$t], cell, cID, cIndex, prev.x, runtime, rho_prev)
-                ac, by = scheme_source!(terms[$t], cell, cID, cIndex, prev.y, runtime, rho_prev)
-                ac, bz = scheme_source!(terms[$t], cell, cID, cIndex, prev.z, runtime, rho_prev)
+                ac, bx = scheme_source!(terms[$t], cells, cID, cIndex, prev.x, runtime, rho_prev)
+                ac, by = scheme_source!(terms[$t], cells, cID, cIndex, prev.y, runtime, rho_prev)
+                ac, bz = scheme_source!(terms[$t], cells, cID, cIndex, prev.z, runtime, rho_prev)
                 AC += F(ac) # assuming ac's for all directions are equal
                 BX += F(bx)
                 BY += F(by)
@@ -250,6 +251,10 @@ _unscaled_flux_type(::Type{F}) where {F} = F
         end
         return quote
             z = zero(F)
+            ac = z
+            bx = z
+            by = z
+            bz = z
             AC = z
             BX = z
             BY = z
@@ -260,27 +265,22 @@ _unscaled_flux_type(::Type{F}) where {F} = F
     end
 end
 
-@inline function _scheme_source!(model::Model, terms, cell, cID, cIndex, prev, runtime)
-    rho_prev = (length(terms) > 0 && hasproperty(terms[1], :flux)) ? terms[1].flux : ConstantScalar(1.0)
-    return _scheme_source!(model, terms, cell, cID, cIndex, prev, runtime, rho_prev)
-end
+# Operator scaling wraps a source field in ScaledFlux. Classification has to see the
+# field underneath, otherwise the generated source kernel has no scalar or vector body.
+_unscaled_flux_type(::Type{ScaledFlux{F,V}}) where {F,V} = _unscaled_flux_type(F)
+_unscaled_flux_type(::Type{F}) where {F} = F
 
 # Sources generated function definition
-@generated function _sources!(model::Model{TN,SN,T,S}, sources::SRC, volume::F, cID) where {TN,SN,T,S,SRC,F}
+@generated function _sources!(
+    sources::SRC, volume::F, cID
+    ) where {SRC,F}
+    SN = fieldcount(SRC)
     # Allocate expression array to store source function
     out = Expr(:block)
-
-    # Same scalar/vector detection as _scheme_source!
-    phi_field_type = if SN > 0
-        _unscaled_flux_type(S.parameters[1].parameters[1])
-    elseif TN > 0
-        T.parameters[1].parameters[2]
-    else
-        AbstractScalarField
-    end
+    field_type = _unscaled_flux_type(SRC.parameters[1].parameters[1])
 
     # Loop over number of terms and store source function in array
-    if phi_field_type <: AbstractScalarField
+    if field_type <: AbstractScalarField
         for s in 1:SN
             expression_call_sources = quote
                 (; field, sign) = sources[$s]
@@ -293,14 +293,13 @@ end
             $(out.args...)
             return B
         end
-    elseif phi_field_type <: AbstractVectorField
+    elseif field_type <: AbstractVectorField
         for s in 1:SN
             expression_call_sources = quote
                 (; field, sign) = sources[$s]
-                value = field[cID]
-                Bx += F(sign*value[1]*volume)
-                By += F(sign*value[2]*volume)
-                Bz += F(sign*value[3]*volume)
+                Bx += F(sign*field.x[cID]*volume)
+                By += F(sign*field.y[cID]*volume)
+                Bz += F(sign*field.z[cID]*volume)
             end
             push!(out.args, expression_call_sources)
         end
@@ -338,12 +337,12 @@ function update_equation!(eqn::ModelEquation{T,M,E,S,P}, config) where {T<:Vecto
 
     # Call set nzval to zero kernel
     ndrange = length(nzval0)
-    kernel! = _update_equation!(_setup(backend, workgroup, ndrange)...)
+    kernel! = _sized(_update_equation!, backend, workgroup, ndrange)
     kernel!(nzval, nzval0)
     # # KernelAbstractions.synchronize(backend)
 end
 
-@kernel function _update_equation!(nzval, nzval0)
+@kernel function _update_equation!(nzval, nzval0) 
     i = @index(Global)
 
     @inbounds begin
@@ -351,184 +350,133 @@ end
     end
 end
 
-# ---------------------------------------------------------
-# PHASE 4: Split Assembly
-# ---------------------------------------------------------
-
+# Split assembly and matrix-free evaluation for the PDE layer. Coefficients come from the
+# same _scheme! / _scheme_source! used by discretise!, including the affine face offset.
 function assemble_matrix!(eqn::ModelEquation{T,M,E,S,P}, config) where {T<:ScalarModel,M,E,S,P}
     (; hardware, runtime) = config
     (; backend, workgroup) = hardware
     mesh = get_phi(eqn).mesh
     A = _A(eqn)
     nzval = _nzval(A)
-    colval = _colval(A)
-    rowptr = _rowptr(A)
-    z = zero(eltype(nzval))
-    xcal_foreach(nzval, config) do i
-        nzval[i] = z
-    end
-    ndrange = length(mesh.cells)
-    kernel! = _assemble_matrix_scalar_model!(_setup(backend, workgroup, ndrange)...)
-    kernel!(eqn.model, eqn.model.terms, mesh, nzval, colval, rowptr, get_values(get_phi(eqn), nothing), runtime)
+    (; diag_nz, face_nz) = eqn.equation
+    fill_nzval!(nzval, config)
+    terms, _ = _kernel_model(eqn.model, mesh)
+    (; cells, faces, cell_faces, cell_neighbours, cell_nsign) = mesh
+    ndrange = length(cells)
+    kernel! = _sized(_assemble_matrix_scalar!, backend, workgroup, ndrange)
+    kernel!(terms, cells, faces, cell_faces, cell_neighbours, cell_nsign, nzval,
+        diag_nz, face_nz, _kernel_field(get_phi(eqn)), runtime,
+        _kernel_field(_get_flux(eqn.model.terms[1])))
 end
 
-@kernel function _assemble_matrix_scalar_model!(model::Model{TN,SN,T,S}, terms::TERMS, mesh, nzval::AbstractArray{F}, colval, rowptr, prev, runtime) where {TN,SN,T,S,F,TERMS}
+@kernel function _assemble_matrix_scalar!(
+    terms::TERMS, cells, faces, cell_faces, cell_neighbours, cell_nsign,
+    nzval::AbstractArray{F}, diag_nz, face_nz, prev, runtime, rho_prev) where {F,TERMS}
     i = @index(Global)
-    (; faces, cells, cell_faces, cell_neighbours, cell_nsign) = mesh
     @inbounds begin
-        cell = cells[i]
-        (; faces_range) = cell
-        cIndex = spindex(rowptr, colval, i, i)
+        faces_range = cells.faces_range[i]
+        cIndex = diag_nz[i]
         ac_sum = zero(F)
         for fi in faces_range
             fID = cell_faces[fi]
             ns = cell_nsign[fi]
-            face = faces[fID]
             nID = cell_neighbours[fi]
-            cellN = cells[nID]
-            nIndex = spindex(rowptr, colval, i, nID)
-            ac, an, _ = _scheme!(model, terms, nzval, cell, face, cellN, ns, i, nID, cIndex, nIndex, fID, prev, runtime)
+            nIndex = face_nz[fi]
+            ac, an, _ = _scheme!(terms, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
             ac_sum += ac
             nzval[nIndex] = an
         end
-        ac, _ = _scheme_source!(model, terms, cell, i, cIndex, prev, runtime)
+        ac, _ = _scheme_source!(terms, cells, i, cIndex, prev, runtime, rho_prev)
         nzval[cIndex] = ac_sum + ac
     end
 end
 
-function assemble_matrix!(eqn::ModelEquation{T,M,E,S,P}, config) where {T<:VectorModel,M,E,S,P}
-    (; hardware, runtime) = config
-    (; backend, workgroup) = hardware
-    mesh = get_phi(eqn).mesh
-    A = _A(eqn)
-    A0 = _A0(eqn)
-    nzval = _nzval(A)
-    nzval0 = _nzval(A0)
-    colval = _colval(A)
-    rowptr = _rowptr(A)
-    z = zero(eltype(nzval))
-    xcal_foreach(nzval, config) do i
-        nzval0[i] = z
-    end
-    ndrange = length(mesh.cells)
-    kernel! = _assemble_matrix_vector_model!(_setup(backend, workgroup, ndrange)...)
-    kernel!(eqn.model, eqn.model.terms, mesh, nzval0, colval, rowptr, get_phi(eqn), runtime)
-end
-
-@kernel function _assemble_matrix_vector_model!(model::Model{TN,SN,T,S}, terms::TERMS, mesh, nzval0::AbstractArray{F}, colval, rowptr, prev, runtime) where {TN,SN,T,S,F,TERMS}
-    i = @index(Global)
-    (; faces, cells, cell_faces, cell_neighbours, cell_nsign) = mesh
-    @inbounds begin
-        cell = cells[i]
-        (; faces_range) = cell
-        cIndex = spindex(rowptr, colval, i, i)
-        ac_sum = zero(F)
-        for fi in faces_range
-            fID = cell_faces[fi]
-            ns = cell_nsign[fi]
-            face = faces[fID]
-            nID = cell_neighbours[fi]
-            cellN = cells[nID]
-            nIndex = spindex(rowptr, colval, i, nID)
-            ac, an, _ = _scheme!(model, terms, nzval0, cell, face, cellN, ns, i, nID, cIndex, nIndex, fID, prev, runtime)
-            ac_sum += ac
-            nzval0[nIndex] = an
-        end
-        ac, _, _, _ = _scheme_source!(model, terms, cell, i, cIndex, prev, runtime)
-        nzval0[cIndex] = ac_sum + ac
-    end
-end
-
-function assemble_rhs!(eqn::ModelEquation{T,M,E,S,P}, source::AbstractSource, config) where {T<:ScalarModel,M,E,S,P}
+function assemble_rhs!(
+    eqn::ModelEquation{T,M,E,S,P}, source::AbstractSource, config
+    ) where {T<:ScalarModel,M,E,S,P}
     (; hardware, runtime) = config
     (; backend, workgroup) = hardware
     mesh = get_phi(eqn).mesh
     b = _b(eqn)
+    z = zero(eltype(b))
     xcal_foreach(b, config) do i
-        b[i] = zero(eltype(b))
+        b[i] = z
     end
-    ndrange = length(mesh.cells)
-    kernel! = _assemble_rhs_scalar_model!(_setup(backend, workgroup, ndrange)...)
-    temp_sources = (source,)
-    kernel!(eqn.model, eqn.model.terms, temp_sources, mesh, b, get_values(get_phi(eqn), nothing), runtime)
+    terms, _ = _kernel_model(eqn.model, mesh)
+    sources = (Src(_kernel_field(source.field), source.sign),)
+    (; cells, faces, cell_faces, cell_neighbours, cell_nsign) = mesh
+    (; diag_nz, face_nz) = eqn.equation
+    ndrange = length(cells)
+    kernel! = _sized(_assemble_rhs_scalar!, backend, workgroup, ndrange)
+    kernel!(terms, sources, cells, faces, cell_faces, cell_neighbours, cell_nsign,
+        diag_nz, face_nz, b, _kernel_field(get_phi(eqn)), runtime,
+        _kernel_field(_get_flux(eqn.model.terms[1])))
 end
 
-@kernel function _assemble_rhs_scalar_model!(model::Model{TN,SN,T,S}, terms::TERMS, sources::SRCS, mesh, b::AbstractArray{F}, prev, runtime) where {TN,SN,T,S,F,TERMS,SRCS}
+@kernel function _assemble_rhs_scalar!(
+    terms::TERMS, sources::SRCS, cells, faces, cell_faces, cell_neighbours, cell_nsign,
+    diag_nz, face_nz, b::AbstractArray{F}, prev, runtime, rho_prev) where {F,TERMS,SRCS}
     i = @index(Global)
-    (; faces, cells, cell_faces, cell_neighbours, cell_nsign) = mesh
     @inbounds begin
-        cell = cells[i]
-        (; faces_range, volume) = cell
-        b[i] = zero(F)
+        faces_range = cells.faces_range[i]
+        volume = cells.volume[i]
+        cIndex = diag_nz[i]
+        b_face = zero(F)
         for fi in faces_range
             fID = cell_faces[fi]
             ns = cell_nsign[fi]
-            face = faces[fID]
             nID = cell_neighbours[fi]
-            cellN = cells[nID]
-            _, _, bface = _scheme!(model, terms, b, cell, face, cellN, ns, i, nID, 1, 1, fID, prev, runtime)
-            b[i] += bface
+            nIndex = face_nz[fi]
+            _, _, bf = _scheme!(terms, b, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
+            b_face += bf
         end
-        _, b1 = _scheme_source!(model, terms, cell, i, 1, prev, runtime)
-        b2 = _sources!(model, sources, volume, i)
-        b[i] += b2 + b1
+        _, b1 = _scheme_source!(terms, cells, i, cIndex, prev, runtime, rho_prev)
+        b2 = _sources!(sources, volume, i)
+        b[i] = b2 + b1 + b_face
     end
 end
 
-# ---------------------------------------------------------
-# PHASE 5: Matrix-Free Evaluation
-# ---------------------------------------------------------
-# TWO RESIDUAL PATHS — keep these distinct:
-#
-#   explicit_residual!(r, eqn, phi, config)
-#     INTERIOR-ONLY explicit evaluation. Loops over cell.faces_range which
-#     contains only interior face indices by mesh topology design.
-#     BC face contributions are absent. Used internally as the interior half
-#     of the explicit path in residual!(explicit=true).
-#
-#   residual!(r, eqn, config)            ← the one users should call
-#     FULL residual = interior + BC contributions. Two paths:
-#       explicit=false (default): A·φ − b from the assembled sparse matrix
-#                                 (fvm:: style — BCs already in A and b)
-#       explicit=true:            explicit_residual! + apply_bc_residuals!
-#                                 (fvc:: style — re-evaluates fluxes directly)
-#     Both give the same result for linear problems.
-
-function explicit_residual!(r::AbstractVector, eqn::ModelEquation{T,M,E,S,P}, phi, config) where {T<:ScalarModel,M,E,S,P}
+function explicit_residual!(
+    r::AbstractVector, eqn::ModelEquation{T,M,E,S,P}, phi, config
+    ) where {T<:ScalarModel,M,E,S,P}
     (; hardware, runtime) = config
     (; backend, workgroup) = hardware
     mesh = get_phi(eqn).mesh
-    ndrange = length(mesh.cells)
-    kernel! = _explicit_residual_scalar!(_setup(backend, workgroup, ndrange)...)
-    kernel!(eqn.model, eqn.model.terms, eqn.model.sources, mesh, r, get_values(phi, nothing), runtime)
+    terms, sources = _kernel_model(eqn.model, mesh)
+    (; cells, faces, cell_faces, cell_neighbours, cell_nsign) = mesh
+    (; diag_nz, face_nz) = eqn.equation
+    ndrange = length(cells)
+    kernel! = _sized(_explicit_residual_scalar!, backend, workgroup, ndrange)
+    kernel!(terms, sources, cells, faces, cell_faces, cell_neighbours, cell_nsign,
+        diag_nz, face_nz, r, _kernel_field(phi), runtime,
+        _kernel_field(_get_flux(eqn.model.terms[1])))
     KernelAbstractions.synchronize(backend)
+    return r
 end
 
-@kernel function _explicit_residual_scalar!(model::Model{TN,SN,T,S}, terms::TERMS, sources::SRCS, mesh, r::AbstractArray{F}, prev, runtime) where {TN,SN,T,S,F,TERMS,SRCS}
+@kernel function _explicit_residual_scalar!(
+    terms::TERMS, sources::SRCS, cells, faces, cell_faces, cell_neighbours, cell_nsign,
+    diag_nz, face_nz, r::AbstractArray{F}, prev, runtime, rho_prev) where {F,TERMS,SRCS}
     i = @index(Global)
-    (; faces, cells, cell_faces, cell_neighbours, cell_nsign) = mesh
     @inbounds begin
-        cell = cells[i]
-        (; faces_range, volume) = cell
-        r[i] = zero(F)
+        faces_range = cells.faces_range[i]
+        volume = cells.volume[i]
+        cIndex = diag_nz[i]
         ac_sum = zero(F)
-        an_phi_sum = zero(F)
-        b_sum = zero(F)
+        an_phi = zero(F)
+        b_face = zero(F)
         for fi in faces_range
             fID = cell_faces[fi]
             ns = cell_nsign[fi]
-            face = faces[fID]
             nID = cell_neighbours[fi]
-            cellN = cells[nID]
-            ac, an, bface = _scheme!(model, terms, r, cell, face, cellN, ns, i, nID, 1, 1, fID, prev, runtime)
+            nIndex = face_nz[fi]
+            ac, an, bf = _scheme!(terms, r, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
             ac_sum += ac
-            an_phi_sum += an * prev[nID]
-            b_sum += bface
+            an_phi += an * prev[nID]
+            b_face += bf
         end
-        ac, b1 = _scheme_source!(model, terms, cell, i, 1, prev, runtime)
-        b2 = _sources!(model, sources, volume, i)
-
-        # r = A*phi - b
-        r[i] = (ac_sum + ac) * prev[i] + an_phi_sum - (b_sum + b1 + b2)
+        ac, b1 = _scheme_source!(terms, cells, i, cIndex, prev, runtime, rho_prev)
+        b2 = _sources!(sources, volume, i)
+        r[i] = (ac_sum + ac) * prev[i] + an_phi - (b_face + b1 + b2)
     end
 end

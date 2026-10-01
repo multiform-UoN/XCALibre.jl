@@ -48,7 +48,7 @@ RotatingWall(name::Symbol; centre, axis, rpm) = begin
 end
 
 @define_boundary RotatingWall Laplacian{Linear} VectorField begin
-    (; area, delta) = face
+    area, delta = faces.area[fID], faces.delta[fID]
     J = term.flux[fID]
     flux = J*area/delta
     ap = term.sign[1]*(-flux)
@@ -78,42 +78,3 @@ end
     vb = bc.value(face)
     -ap, -ap*vb[component.value]
 end
-
-# # Scalar implementations for divergence operator
-# @define_boundary RotatingWall Divergence{Upwind} ScalarField begin
-#     flux = term.flux[fID]
-#     ap = term.sign*(flux) 
-#     ap, 0.0 # original
-
-#     # phi = term.phi 
-#     # values = get_values(phi, component)
-#     # 0.0, -ap*values[cellID] # try this
-# end
-
-# @define_boundary RotatingWall Divergence{Linear} ScalarField begin
-#     flux = term.flux[fID]
-#     ap = term.sign*(flux) 
-#     ap, 0.0 # original
-
-#     # phi = term.phi 
-#     # values = get_values(phi, component)
-#     # 0.0, -ap*values[cellID] # try this
-# end
-
-# @define_boundary RotatingWall Divergence{LUST} ScalarField begin
-#     flux = term.flux[fID]
-#     ap = term.sign*(flux) 
-#     ap, 0.0 # original
-
-#     # phi = term.phi 
-#     # values = get_values(phi, component)
-#     # 0.0, -ap*values[cellID] # try this
-# end
-
-# # @define_boundary Symmetry Divergence{BoundedUpwind} begin
-# #     0.0, 0.0
-# # end
-
-# @define_boundary RotatingWall Si begin
-#     0.0, 0.0
-# end

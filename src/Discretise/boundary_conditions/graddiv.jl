@@ -11,9 +11,10 @@
 
 @inline function (bc::Dirichlet)(
     term::Operator{F,P,S,GradDiv{T,I_ROW,J_COL}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,I_ROW,J_COL}
     @inbounds begin
+        face = faces[fID]
         e_J  = face.e[J_COL]
         n_I  = face.normal[I_ROW]
         ap   = term.sign * (-term.flux[fID] * e_J * face.area * n_I / face.delta)
@@ -23,35 +24,35 @@ end
 
 @inline function (bc::Zerogradient)(
     term::Operator{F,P,S,GradDiv{T,I_ROW,J_COL}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,I_ROW,J_COL}
     return 0.0, 0.0
 end
 
 @inline function (bc::Extrapolated)(
     term::Operator{F,P,S,GradDiv{T,I_ROW,J_COL}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,I_ROW,J_COL}
     return 0.0, 0.0
 end
 
 @inline function (bc::Symmetry)(
     term::Operator{F,P,S,GradDiv{T,I_ROW,J_COL}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,I_ROW,J_COL}
     return 0.0, 0.0
 end
 
 @inline function (bc::Outlet)(
     term::Operator{F,P,S,GradDiv{T,I_ROW,J_COL}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,I_ROW,J_COL}
     return 0.0, 0.0
 end
 
 @inline function (bc::AbstractBoundary)(
     term::Operator{F,P,S,GradDiv{T,I_ROW,J_COL}},
-    colval, rowptr, nzval, cellID, zcellID, cell, face, fID, i, component, time
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
 ) where {F,P,S,T,I_ROW,J_COL}
     error("Boundary $(typeof(bc)) is not supported for GradDiv operator.")
 end

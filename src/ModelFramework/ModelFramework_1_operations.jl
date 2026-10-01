@@ -171,6 +171,11 @@ end
 
 (→)(model::Model{TN,SN,T,S}, BCs::AbstractVector) where {TN,SN,T,S} = model → Tuple(BCs)
 
+# PDE scripts chain boundaries onto an operator and keep the collection they passed.
+# The boundary kernel converts a vector to a tuple when it unrolls the patches.
+(→)(L::PDEOperator, BCs::Union{Tuple,AbstractVector}) =
+    PDEOperator(L.templates, L.sources, BCs, L.setup)
+
 (→)(model::Model{TN,SN,T,S}, eqn::AbstractEquation) where {TN,SN,T,S}= begin
     # To-do: Add runtime check to ensure both sides are consistent (for now document)
     if S.parameters[1].parameters[1] <: AbstractScalarField
