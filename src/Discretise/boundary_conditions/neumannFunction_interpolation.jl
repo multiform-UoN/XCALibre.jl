@@ -2,11 +2,9 @@
     BC::NeumannFunction{T,Test,R}, phif::FaceScalarField, phi, boundary_cellsID, time, fID) where {T,Test<:Function,R}
     (; faces) = phi.mesh
     @inbounds begin
-        # face = faces[fID]
-        # i = fID - BC.IDs_range.start + 1
-        # phif[fID] = BC.value(face.centre, time, i)
+        i = fID - BC.IDs_range.start + 1
         cID = boundary_cellsID[fID]
-        phif = phi[cID]
+        phif[fID] = phi[cID] + faces.delta[fID]*BC.value(faces.centre[fID], time, i)
     end
     nothing
 end
@@ -19,7 +17,7 @@ end
         # i = fID - BC.IDs_range.start + 1
         # psif[fID] = BC.value(face.centre, time, i)
         cID = boundary_cellsID[fID]
-        psif = psi[cID]
+        psif[fID] = psi[cID]
     end
     nothing
 end
@@ -32,7 +30,7 @@ end
         # i = fID - BC.IDs_range.start + 1
         # phif[fID] = BC.value(face.centre, time, i)
         cID = boundary_cellsID[fID]
-        phif = phi[cID]
+        phif[fID] = phi[cID]
     end
     nothing
 end
@@ -45,7 +43,7 @@ end
         # i = fID - BC.IDs_range.start + 1
         # psif[fID] = BC.value(face.centre, time, i)
         cID = boundary_cellsID[fID]
-        psif = psi[cID]
+        psif[fID] = psi[cID]
     end
     nothing
 end

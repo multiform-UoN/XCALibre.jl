@@ -71,6 +71,27 @@ end
     return coeff, 0.0
 end
 
+# Neumann-type conditions: face value = boundary-cell value + delta * normal gradient
+@inline _neumann_gradient(bc::Neumann, coords, time, i) = bc.value
+
+@inline function (bc::Union{Neumann,NeumannFunction})(
+    term::Operator{F,P,S,ScalarGrad{T,I_ROW}},
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
+) where {F,P,S,T,I_ROW}
+    face = faces[fID]
+    coeff = _scalargrad_coeff(term, face, fID, Val(I_ROW))
+    return coeff, -coeff * face.delta * _neumann_gradient(bc, face.centre, time, i)
+end
+
+@inline function (bc::Union{Neumann,NeumannFunction})(
+    term::Operator{F,P,S,VectorDiv{T,J_COL}},
+    colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
+) where {F,P,S,T,J_COL}
+    face = faces[fID]
+    coeff = _vectordiv_coeff(term, face, fID, Val(J_COL))
+    return coeff, -coeff * face.delta * _neumann_gradient(bc, face.centre, time, i)
+end
+
 @inline function (bc::Empty)(
     term::Operator{F,P,S,ScalarGrad{T,I_ROW}},
     colval, rowptr, nzval, cellID, zcellID, cells, faces, fID, i, component, time
