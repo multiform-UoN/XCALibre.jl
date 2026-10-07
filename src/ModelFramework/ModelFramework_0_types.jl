@@ -297,7 +297,7 @@ end
 # _build_A(backend::CPU, i, j, v, n) = sparsecsr(i, j, v, n, n)
 # _build_opA(A::SparseMatricesCSR.SparseMatrixCSR) = LinearOperator(A)
 
-_build_A(backend::CPU, i, j, v, n) = SparseXCSR(sparsecsr(i, j, v, n, n))
+_build_A(backend::CPU, i, j, v, n) = _first_touch_if_enabled(SparseXCSR(sparsecsr(i, j, v, n, n)))
 _build_opA(A::SparseXCSR) = A
 
 ## ORIGINAL STRUCTURE PARAMETERISED FOR GPU
@@ -353,9 +353,9 @@ ScalarEquation(phi::ScalarField, BCs; extended=false) = begin
     ScalarEquation(
         A,
         _build_opA(A),
-        KernelAbstractions.zeros(backend, Tf, nCells),
-        KernelAbstractions.zeros(backend, Tf, nCells),
-        KernelAbstractions.zeros(backend, Tf, nCells),
+        first_touch_zeros(backend, Tf, nCells),
+        first_touch_zeros(backend, Tf, nCells),
+        first_touch_zeros(backend, Tf, nCells),
         diag_nz,
         face_nz,
         phi,
@@ -397,11 +397,11 @@ VectorEquation(psi::VectorField, BCs) = begin
         A0,
         A,
         _build_opA(A),
-        KernelAbstractions.zeros(backend, Tf, nCells),
-        KernelAbstractions.zeros(backend, Tf, nCells),
-        KernelAbstractions.zeros(backend, Tf, nCells),
-        KernelAbstractions.zeros(backend, Tf, nCells),
-        KernelAbstractions.zeros(backend, Tf, nCells),
+        first_touch_zeros(backend, Tf, nCells),
+        first_touch_zeros(backend, Tf, nCells),
+        first_touch_zeros(backend, Tf, nCells),
+        first_touch_zeros(backend, Tf, nCells),
+        first_touch_zeros(backend, Tf, nCells),
         diag_nz,
         face_nz,
         psi,
@@ -452,6 +452,9 @@ function nz_index_maps(mesh, A, backend)
         for fi ∈ cells[cID].faces_range
             face_nz[fi] = spindex(rowptr, colval, cID, cell_neighbours[fi])
         end
+    end
+    if backend isa CPU && first_touch_enabled()
+        diag_nz, face_nz = first_touch_copy(diag_nz), first_touch_copy(face_nz, mesh.cell_faces_range)
     end
     (adapt(backend, diag_nz), adapt(backend, face_nz))
 end
