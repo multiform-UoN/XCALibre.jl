@@ -119,6 +119,10 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("unit_test_lke_production.jl")
     end
 
+    @testset "Explicit viscous stress" begin
+        include("unit_test_transpose_stress.jl")
+    end
+
     @testset "setFields Function Unit Test" begin
         include("unit_test_setFields.jl")
     end
@@ -133,6 +137,10 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
 
     @testset "Viscosity Models Unit Test" begin
         include("unit_test_ViscosityModels.jl")
+    end
+
+    @testset "Turbulence Float Types Unit Test" begin
+        include("unit_test_turbulence_float_types.jl")
     end
 
     @testset "Laplace Functionality Test" begin
