@@ -129,6 +129,9 @@ function LAPLACE(
     (; k, kf, cp, rho, rhocp, rDf) = model.solid
     mesh = model.domain
     (; solvers, schemes, runtime, hardware, boundaries, postprocess) = config
+    # Public callers pass the per-field NamedTuple; internal runners may
+    # already have selected the temperature setup.
+    temperature_setup = solvers isa SolverSetup ? solvers : solvers.T
     (; iterations, write_interval, dt) = runtime
     (; backend) = hardware
 
@@ -145,7 +148,7 @@ function LAPLACE(
     for iteration ∈ 1:iterations
         time = iteration *dt
 
-        rt = solve_equation!(T_eqn, T, boundaries.T, solvers, config; time=time)
+        rt = solve_equation!(T_eqn, T, boundaries.T, temperature_setup, config; time=time)
 
         if typeof(model.solid) <: NonUniform
             energy!(model.energy, model, T, rDf, rhocp, k, kf, cp, rho, config)
@@ -153,7 +156,7 @@ function LAPLACE(
 
         R_T[iteration] = rt
 
-        if (R_T[iteration] <= solvers.convergence) && (typeof(model.time) <: Steady)
+        if (R_T[iteration] <= temperature_setup.convergence) && (typeof(model.time) <: Steady)
             if !isnothing(bar)
                 bar.n = iteration
                 finish!(bar)
