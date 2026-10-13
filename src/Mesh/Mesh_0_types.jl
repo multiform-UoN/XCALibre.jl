@@ -94,7 +94,7 @@ Adapt.@adapt_structure Face2D
         normal::SV3     # face normal unit vector
         e::SV3          # unit vector in the direction between owner cells
         area::F         # face area
-        delta::F        # distance between owner cells centres
+        delta::F        # distance between owner cells centres (boundary: wall-normal distance)
         weight::F       # linear interpolation weight
     end
 """
@@ -111,7 +111,7 @@ struct Face3D{
     normal::SV3     # face normal unit vector
     e::SV3          # unit vector in the direction between owner cells
     area::F         # face area
-    delta::F        # distance between owner cells centres
+    delta::F        # distance between owner cells centres (boundary: wall-normal distance)
     weight::F       # linear interpolation weight
 end
 Adapt.@adapt_structure Face3D
@@ -254,7 +254,7 @@ struct Mesh2{VV, VTF, VR, VO, VI, VS, VB} <: AbstractMesh
     face_normal::VV      # face unit normals
     face_e::VV           # unit vectors between owner cell centres
     face_area::VTF       # face areas
-    face_delta::VTF      # distance between owner cell centres
+    face_delta::VTF      # distance between owner cell centres (boundary: wall-normal distance)
     face_weight::VTF     # linear interpolation weights
     face_nodes::VI       # node IDs of each face
     face_gDiff::VTF      # Laplacian face coefficient (derived, see `_gDiff`)
@@ -319,7 +319,7 @@ its own array; `mesh.cells`, `mesh.faces` and `mesh.nodes` return views that ind
     face_normal::VV      # face unit normals
     face_e::VV           # unit vectors between owner cell centres
     face_area::VTF       # face areas
-    face_delta::VTF      # distance between owner cell centres
+    face_delta::VTF      # distance between owner cell centres (boundary: wall-normal distance)
     face_weight::VTF     # linear interpolation weights
     face_nodes::VI       # node IDs of each face
     face_gDiff::VTF      # Laplacian face coefficient (derived, see `_gDiff`)
@@ -347,7 +347,7 @@ struct Mesh3{VV, VTF, VR, VO, VI, VS, VB} <: AbstractMesh
     face_normal::VV      # face unit normals
     face_e::VV           # unit vectors between owner cell centres
     face_area::VTF       # face areas
-    face_delta::VTF      # distance between owner cell centres
+    face_delta::VTF      # distance between owner cell centres (boundary: wall-normal distance)
     face_weight::VTF     # linear interpolation weights
     face_nodes::VI       # node IDs of each face
     face_gDiff::VTF      # Laplacian face coefficient (derived, see `_gDiff`)
@@ -391,17 +391,6 @@ Mesh3(cells, cell_nodes, cell_faces, cell_neighbours, cell_nsign, faces, face_no
     cells, cell_nodes, cell_faces, cell_neighbours, cell_nsign, faces, face_nodes,
     face_gDiff_coefficients(faces), boundaries, nodes, node_cells, get_float, get_int,
     boundary_cellsID)
-
-# first touch: arrays reached through a per-cell, face or node range are cut by that range, so
-# each thread places the entries of the elements it owns
-Adapt.adapt_structure(to::FirstTouch, m::Mesh2) = _first_touch_mesh(Mesh2, to, m)
-Adapt.adapt_structure(to::FirstTouch, m::Mesh3) = _first_touch_mesh(Mesh3, to, m)
-_first_touch_mesh(M, to, m) = M(adapt(to, m.cells), first_touch_copy(m.cell_nodes, m.cell_nodes_range),
-    first_touch_copy(m.cell_faces, m.cell_faces_range), first_touch_copy(m.cell_neighbours, m.cell_faces_range),
-    first_touch_copy(m.cell_nsign, m.cell_faces_range), adapt(to, m.faces),
-    first_touch_copy(m.face_nodes, m.face_nodes_range), adapt(to, m.face_gDiff), adapt(to, m.boundaries),
-    adapt(to, m.nodes), first_touch_copy(m.node_cells, m.node_cells_range), adapt(to, m.get_float),
-    adapt(to, m.get_int), adapt(to, m.boundary_cellsID))
 
 Base.show(io::IO, mesh::AbstractMesh) = begin
     if typeof(mesh) <: Mesh2

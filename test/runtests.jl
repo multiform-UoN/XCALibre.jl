@@ -4,6 +4,9 @@ using SparseArrays
 using SparseMatricesCSR
 using StaticArrays 
 using Statistics
+using Random
+using Interpolations: linear_interpolation
+using FFTW
 using Test
 
 workgroupsize(mesh) = length(mesh.cells) ÷ Threads.nthreads()
@@ -14,6 +17,14 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
 
     @testset "Mesh conversion" begin
         include("test_mesh_conversion.jl")
+    end
+
+    @testset "Padded neighbour list" begin
+        include("unit_test_foam_padded_neighbour.jl")
+    end
+
+    @testset "Mesh reordering" begin
+        include("unit_test_mesh_reorder.jl")
     end
 
     @testset "Face orientation" begin
@@ -102,6 +113,10 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("unit_test_bicgstab_shadow.jl")
     end
 
+    @testset "Mixed-precision linear solves" begin
+        include("unit_test_mixed_precision.jl")
+    end
+
     @testset "Wall Distance Unit Test" begin
         include("unit_test_wall_distance.jl")
     end
@@ -125,6 +140,30 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
 
     @testset "Explicit viscous stress" begin
         include("unit_test_transpose_stress.jl")
+    end
+
+    @testset "Face compressibility at the solver time" begin
+        include("unit_test_thermo_psi_time.jl")
+    end
+
+    @testset "Viscous work of the enthalpy equation" begin
+        include("unit_test_viscous_work.jl")
+    end
+
+    @testset "Run continuation" begin
+        include("unit_test_run_continuation.jl")
+    end
+
+    @testset "Compressible mass flux conservation" begin
+        include("unit_test_compressible_mass_flux.jl")
+    end
+
+    @testset "Consistent (SIMPLEC) coupling" begin
+        include("unit_test_consistent_coupling.jl")
+    end
+
+    @testset "Non-orthogonal correction flux continuity" begin
+        include("unit_test_nonorthogonal_flux.jl")
     end
 
     @testset "setFields Function Unit Test" begin
@@ -196,6 +235,7 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
             "3d_incompressible_laminar_cascade_periodic.jl",
             "2d_incompressible_pitzdaily_KEquation.jl",
             "2d_incompressible_pitzdaily_Smagorinsky.jl",
+            "3d_incompressible_isotropic_turbulence_WALE.jl",
             "2d_taylor_couette_laminar.jl"
         ]
 

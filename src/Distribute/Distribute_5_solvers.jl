@@ -37,7 +37,8 @@ Solve.unwrap_eqn(deqn::DistributedEqn) = deqn.eqn
 
 function Solve.wrap_eqn(eqn, dmesh::DistributedMesh, setup, config;
         petsc_options="", label="")
-    DistributedEqn(eqn, PETScSolver(eqn, dmesh, setup; petsc_options, label), getfield(dmesh, :partition))
+    solver = _distributed_solver(setup.precision, eqn, dmesh, setup, config; petsc_options, label)
+    DistributedEqn(eqn, solver, getfield(dmesh, :partition))
 end
 
 function Solve.solve_equation!(
@@ -207,6 +208,8 @@ Solvers.global_max(v, dm::DistributedMesh) =
     (ALLREDUCE_COUNT[] += 1; MPI.Allreduce(v, max, getfield(dm, :comm)))
 # courant kernel dispatches on Mesh2/Mesh3 geometry — unwrap the DistributedMesh
 Solvers._base_mesh(dm::DistributedMesh) = getfield(dm, :mesh)
+# LES Δ scaling dispatches on Mesh2/Mesh3; the local extent normal to Empty patches is the global one
+ModelPhysics.delta_scaling(dm::DistributedMesh, BCs) = ModelPhysics.delta_scaling(getfield(dm, :mesh), BCs)
 
 # MeshWave wall distance: a cell touching a wall node needs every wall face through that node,
 # and some belong to other ranks. A node shared between ranks lies on a processor face of each

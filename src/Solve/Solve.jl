@@ -20,7 +20,7 @@ using StaticArrays: StaticArray
 
 using XCALibre.Multithread
 using XCALibre.Multithread: _sized
-import XCALibre.Multithread: XVector, _foreach_chunk, _first_touch_if_enabled
+import XCALibre.Multithread: XVector, _foreach_chunk, _active_backend, _acc_type
 using XCALibre.Mesh
 using XCALibre.Fields
 using XCALibre.ModelFramework
@@ -32,6 +32,7 @@ using XCALibre.Discretise
 include("Preconditioners/Preconditioners.jl")
 include("Smoothers/Smoothers.jl")
 include("Solve_1_Krylov_solvers.jl")
+include("Solve_1_mixed_precision.jl")
 include("Solve_1_api.jl")
 include("AMG/AMG.jl")
 include("Solve_2_monolithic.jl")

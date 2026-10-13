@@ -421,8 +421,8 @@ mpiexecjl -n 4 julia --project=<env> your_case.jl
 `mpiexecjl` lives in `~/.julia/bin`, so add that directory to your `PATH`. You can set threads per
 rank with Julia's usual `-t` flag, but one thread per rank is the right default. The CPU kernel
 backend is already serial, so extra threads add overhead rather than saving time. Call
-`activate_multithread(backend)` in the script. Despite its name, it pins BLAS to a single thread,
-which stops each rank from taking every core. On a machine with hyperthreading, bind one rank per
+`activate_multithread(backend)` in the script. It sets the CPU backend fields are built with and pins
+BLAS to a single thread, which stops each rank from taking every core. On a machine with hyperthreading, bind one rank per
 physical core, for example `mpiexecjl -n 4 --bind-to core --map-by core julia ...`.
 
 ## PETSc solvers in a single process
@@ -733,7 +733,7 @@ Distributed today:
 
 - Steady and transient incompressible flow through the SIMPLE and PISO families.
 - The Laplace (conduction) solver, and `potential_flow!` for initialising a velocity field.
-- `Laminar`, `KOmega` and `KOmegaSST` turbulence, including wall distance.
+- `Laminar`, `KOmega` and `KOmegaSST` turbulence, including wall distance, and the `WALE` LES model.
 - CPU and GPU backends, periodic patches, and writing results in OpenFOAM's decomposed layout so
   that the usual tools can reconstruct them.
 
@@ -742,7 +742,7 @@ wrong answer: without a distributed linear-solve seam each rank would solve only
 
 - Compressible flow (`csimple!`, `cpiso!`), the density-based supersonic solver, multiple reference
   frames, the film model and the multiphase solver.
-- The `KOmegaLKE` transition model and the LES models.
+- The `KOmegaLKE` transition model and the LES models other than `WALE`.
 - Float32 with `BoomerAMG`, because the stock PETSc libraries include hypre at Float64 only.
 - GPU runs without a CUDA-enabled PETSc build (see [Setting up MPI and PETSc](@ref)).
 - AMD GPUs, because PETSc.jl cannot yet hand PETSc's HIP vectors back as device arrays.

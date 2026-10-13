@@ -114,13 +114,16 @@ function PISO(
     interpolate!(Uf, U, config)
     correct_boundaries!(Uf, U, boundaries.U, time, config)
     flux!(mdotf, Uf, config)
+    continue_flux!(mdotf, model.momentum, mesh, restart)
     restart_flux!(mesh, mdotf, restart, config)
     grad!(∇p, pf, p, boundaries.p, time, config)
     limit_gradient!(schemes.p.limiter, ∇p, p, config)
     grad!(gradU, Uf, U, boundaries.U, time, config) # for the stress term of the first time step
     limit_gradient!(schemes.U.limiter, gradU, U, config)
 
+    transpose_stress && prime_face_nut!(model, boundaries, config)
     update_nueff!(nueff, nu, model.turbulence, config)
+    nueffc = cell_nueff(nu, model.turbulence) # cell ν_eff for the transpose stress
 
     xdir, ydir, zdir = XDir(), YDir(), ZDir()
 
@@ -134,7 +137,8 @@ function PISO(
         time += dt_cpu[1]
 
         # gradU and nueff of the start-of-step velocity (updated by turbulence! below)
-        transpose_stress && transpose_stress!(divτT, nueff, gradU, boundaries.U, config)
+        transpose_stress && transpose_stress!(
+            divτT, nueff, gradU, boundaries.U, config; cell_mueff=nueffc)
 
         rx, ry, rz = solve_equation!(
             U_deqn, U, boundaries.U, solvers.U, xdir, ydir, zdir, config; time=time)
@@ -165,10 +169,13 @@ function PISO(
                 prev[i] = p[i]
             end
             @. p_boundary_reference = p.values
-            rp = solve_equation!(p_deqn, p, boundaries.p, solvers.p, config; ref=pref, time=time)
+            if ncorrectors == 0
+                rp = solve_equation!(
+                    p_deqn, p, boundaries.p, solvers.p, config; ref=pref, time=time)
+            end
 
-            # nonorthogonal correction (experimental)
-            for j ∈ 1:ncorrectors
+            # Every pressure solve carries the explicit non-orthogonal source (see CSIMPLE)
+            for j ∈ 1:nonorthogonal_solves(ncorrectors)
                 grad!(∇p, pf, p, boundaries.p, time, config)
                 limit_gradient!(schemes.p.limiter, ∇p, p, config)
                 @. p_boundary_reference = p.values
@@ -232,5 +239,6 @@ function PISO(
     end
 
     end # end for loop
+    store_flux!(model.momentum, mdotf)
     return (Ux=R_ux, Uy=R_uy, Uz=R_uz, p=R_p)
 end

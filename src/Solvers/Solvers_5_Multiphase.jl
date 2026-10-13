@@ -151,13 +151,13 @@ function setup_multiphase_solvers(
 
     @info "Initialising preconditioners..."
 
-    @reset U_eqn.preconditioner = set_preconditioner(solvers.U.preconditioner, U_eqn)
-    @reset p_eqn.preconditioner = set_preconditioner(solvers.p_rgh.preconditioner, p_eqn)
+    @reset U_eqn.preconditioner = set_preconditioner(solvers.U, U_eqn)
+    @reset p_eqn.preconditioner = set_preconditioner(solvers.p_rgh, p_eqn)
 
     @info "Pre-allocating solvers..."
 
-    @reset U_eqn.solver = _workspace(solvers.U.solver, _b(U_eqn, XDir()), _index_type(_A(U_eqn)))
-    @reset p_eqn.solver = _workspace(solvers.p_rgh.solver, _b(p_eqn), _index_type(_A(p_eqn)))
+    @reset U_eqn.solver = _workspace(solvers.U, U_eqn, XDir())
+    @reset p_eqn.solver = _workspace(solvers.p_rgh, p_eqn)
 
     @info "Initialising turbulence model..."
     turbulenceModel, config = initialise(model.turbulence, model, mdotf, p_eqn, config)
@@ -291,9 +291,12 @@ function MULTIPHASE(
     interpolate!(Uf, U, config)
     correct_boundaries!(Uf, U, boundaries.U, time, config)
     flux!(mdotf, Uf, config)
+    continue_flux!(mdotf, model.momentum, mesh, nothing)
     @. rhoPhi.values = mdotf.values * rhof.values
+    transpose_stress && prime_face_nut!(model, boundaries, config)
     update_nueff!(nueff, nuf, model.turbulence, config)
     @. mueff.values  = rhof.values * nueff.values
+    mueffc = cell_mueff(rho, nu, model.turbulence) # cell mixture μ_eff for the transpose stress
     grad!(gradU, Uf, U, boundaries.U, time, config) # for the stress term of the first time step
     limit_gradient!(schemes.U.limiter, gradU, U, config)
 
@@ -362,7 +365,8 @@ function MULTIPHASE(
             sigma=sigma, kappaf=kappaf, alpha=alpha)
 
         # gradU of the start-of-step velocity (updated by turbulence! below), mueff of the new alpha
-        transpose_stress && transpose_stress!(divτT, mueff, gradU, boundaries.U, config)
+        transpose_stress && transpose_stress!(
+            divτT, mueff, gradU, boundaries.U, config; cell_mueff=mueffc)
 
         rx, ry, rz = solve_equation!(
             U_eqn, U, boundaries.U, solvers.U, xdir, ydir, zdir, config; rho_prev=rho_prev, time=time)
@@ -448,6 +452,7 @@ function MULTIPHASE(
         end
     end
 
+    store_flux!(model.momentum, mdotf)
     return (Ux=R_ux, Uy=R_uy, Uz=R_uz, p=R_p, alpha=R_alpha)
 end
 
@@ -1316,9 +1321,10 @@ function correct_mass_flux_mp!(mdotf, p_eqn, config; previous, time=nothing)
     n_bfaces = length(boundary_cellsID)
     n_ifaces = n_faces - n_bfaces
 
-    ndrange = n_ifaces # length(n_ifaces) was a BUG! should be n_ifaces only!!!!
+    pterm = p_eqn.model.terms[laplacian_term_index(p_eqn.model.terms)]
+    ndrange = n_ifaces
     kernel! = _sized(_correct_mass_flux!, backend, workgroup, ndrange)
-    kernel!(mdotf, p, nzval, colval, rowptr, faces, cells, n_bfaces)
+    kernel!(mdotf, p, pterm.flux, pterm.sign, mdotf.mesh.face_gDiff, faces, n_bfaces)
     KernelAbstractions.synchronize(backend)
 
     p_BCs = config.boundaries.p_rgh # this line had to be changed from ".p"
