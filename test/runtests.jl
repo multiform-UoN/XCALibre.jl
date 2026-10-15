@@ -39,6 +39,26 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("test_physical_boundary_conditions.jl")
     end
 
+    @testset "Second-order upwind divergence schemes" begin
+        include("unit_test_linear_upwind.jl")
+    end
+
+    @testset "LUST in deferred-correction form (LUSTDC)" begin
+        include("unit_test_lustdc.jl")
+    end
+
+    @testset "LUST with explicit upwind correction (LUSTLU)" begin
+        include("unit_test_lustlu.jl")
+    end
+
+    @testset "Least-squares gradient" begin
+        include("unit_test_least_squares.jl")
+    end
+
+    @testset "Venkatakrishnan gradient limiter" begin
+        include("unit_test_venkat_limiter.jl")
+    end
+
     @testset "Potential-flow initialisation" begin
         include("test_potential_flow.jl")
     end
@@ -150,6 +170,10 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("unit_test_viscous_work.jl")
     end
 
+    @testset "Kinetic-energy flux of the enthalpy equation" begin
+        include("unit_test_kinetic_energy_flux.jl")
+    end
+
     @testset "Run continuation" begin
         include("unit_test_run_continuation.jl")
     end
@@ -172,6 +196,10 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
 
     @testset "Robin Boundary Condition Unit Test" begin
         include("unit_test_robin.jl")
+    end
+
+    @testset "Viscosity models" begin
+        include("unit_test_ViscosityModels.jl")
     end
 
     @testset "Fluid Properties Unit Test" begin
@@ -262,6 +290,7 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
 
     @testset "Godunov Solver" begin
         include(joinpath(TEST_CASES_DIR, "2d_godunov_supersonic_cylinder.jl"))
+        include(joinpath(TEST_CASES_DIR, "2d_godunov_supersonic_cylinder_RANS.jl"))
     end
 
     @testset "Multiphase Solver" begin

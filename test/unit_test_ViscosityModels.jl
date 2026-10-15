@@ -98,3 +98,7 @@ expected_nu = mu_ref * (150.0 / T_ref)^(3/2) * (T_ref + S) / (150.0 + S) / 1.0
 @test model.fluid.nu[1] ≈ expected_nu
 @test all(v -> v ≈ expected_nu, model.fluid.nu.values)
 @test all(v -> v ≈ expected_nu, model.fluid.nuf.values)
+
+# Viscosity{ConstantViscosity} input must dispatch (was a MethodError)
+nu_c, nuf_c, visc_c = XCALibre.ModelPhysics.initialise_viscosity(Viscosity{ConstantViscosity}(nu=1e-3), mesh_dev)
+@test nu_c.values == 1e-3 && nuf_c.values == 1e-3 && visc_c isa ConstantViscosity
