@@ -4,6 +4,7 @@ export Time, Laplacian, Divergence, Si
 export Model, ScalarEquation, VectorEquation, ModelEquation, ScalarModel, VectorModel
 export nzval_index
 export spindex, spindex_csc
+export NonlinearMap, NonlinearOperator, AffineOperator
 
 # ABSTRACT TYPES 
 
@@ -72,6 +73,56 @@ Divergence{T}(flux, phi, grad) where T = Divergence{T}(flux, phi)
 Si(flux, phi) = Operator(
     flux, phi, 1, Si()
 )
+
+# NONLINEAR OPERATORS
+
+"""
+    NonlinearMap(f, df)
+
+Pointwise map `f` with derivative `df`, both scalar functions that can run in a kernel.
+"""
+struct NonlinearMap{Fun,Deriv}
+    func::Fun
+    derivative::Deriv
+end
+Adapt.@adapt_structure NonlinearMap
+@inline (map::NonlinearMap)(x) = map.func(x)
+
+"""
+    NonlinearOperator(op, map)
+
+Operator `op` applied to `map(phi)` instead of `phi`, e.g. `Laplacian{Linear}(Γ, NonlinearMap(f, df), phi)`
+for ∇·(Γ∇f(φ)). `linearize_physics` turns it into an `AffineOperator` for one Newton step.
+"""
+struct NonlinearOperator{O<:Operator,Fn} <: AbstractOperator
+    op::O
+    map::Fn
+end
+Adapt.@adapt_structure NonlinearOperator
+
+"""
+    AffineOperator(op, jacobian, offset, reference, map)
+
+Newton linearisation of a `NonlinearOperator` about a reference state φ₀: `op` applied to
+`jacobian*phi + offset`, with `jacobian = f'(φ₀)`, `offset = f(φ₀) - f'(φ₀)φ₀` and `reference = f(φ₀)`.
+"""
+struct AffineOperator{O<:Operator,J,C,R,Fn} <: AbstractOperator
+    op::O
+    jacobian::J
+    offset::C
+    reference::R
+    map::Fn
+end
+Adapt.@adapt_structure AffineOperator
+
+Laplacian{T}(flux, map::NonlinearMap, phi) where T = NonlinearOperator(Laplacian{T}(flux, phi), map)
+Divergence{T}(flux, map::NonlinearMap, phi) where T = NonlinearOperator(Divergence{T}(flux, phi), map)
+
+# field and flux of a term, also when it wraps an Operator
+@inline _term_phi(term::Operator) = term.phi
+@inline _term_phi(term) = term.op.phi
+@inline _get_flux(term::Operator) = term.flux
+@inline _get_flux(term) = term.op.flux
 
 # SOURCES
 

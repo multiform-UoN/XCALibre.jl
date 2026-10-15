@@ -14,21 +14,27 @@ _kernel_field(t::TensorField, m=()) = TensorField(
     _kernel_field(t.yx), _kernel_field(t.yy), _kernel_field(t.yz),
     _kernel_field(t.zx), _kernel_field(t.zy), _kernel_field(t.zz), m)
 
+_kernel_term(t::Operator, m) = Operator(
+    _kernel_field(t.flux), _kernel_field(t.phi, m), t.sign, t.type, _kernel_field(t.grad))
+_kernel_term(t::NonlinearOperator, m) = NonlinearOperator(_kernel_term(t.op, m), t.map)
+_kernel_term(t::AffineOperator, m) = AffineOperator(
+    _kernel_term(t.op, m), _kernel_field(t.jacobian), _kernel_field(t.offset),
+    _kernel_field(t.reference), t.map)
+
 _kernel_model(model, mesh) = begin
     m = (; face_gDiff=mesh.face_gDiff)
-    terms = map(t -> Operator(
-        _kernel_field(t.flux), _kernel_field(t.phi, m), t.sign, t.type, _kernel_field(t.grad)), model.terms)
+    terms = map(t -> _kernel_term(t, m), model.terms)
     sources = map(s -> Src(_kernel_field(s.field), s.sign), model.sources)
     terms, sources
 end
 
 function discretise!(
-    eqn::ModelEquation{T,M,E,S,P}, prev, config; rho_prev=eqn.model.terms[1].flux) where {T<:VectorModel,M,E,S,P}
+    eqn::ModelEquation{T,M,E,S,P}, prev, config; rho_prev=_get_flux(eqn.model.terms[1])) where {T<:VectorModel,M,E,S,P}
     (; hardware, runtime) = config
     (; backend, workgroup) = hardware
 
     # Retrieve variabels for defition
-    mesh = eqn.model.terms[1].phi.mesh
+    mesh = _term_phi(eqn.model.terms[1]).mesh
     model = eqn.model
 
     # Sparse array and b accessor call
@@ -99,13 +105,13 @@ end
 end
 
 function discretise!(
-    eqn::ModelEquation{T,M,E,S,P}, prev, config; rho_prev=eqn.model.terms[1].flux) where {T<:ScalarModel,M,E,S,P}
+    eqn::ModelEquation{T,M,E,S,P}, prev, config; rho_prev=_get_flux(eqn.model.terms[1])) where {T<:ScalarModel,M,E,S,P}
 
     (; hardware, runtime) = config
     (; backend, workgroup) = hardware
 
     # Retrieve variabels for defition
-    mesh = eqn.model.terms[1].phi.mesh
+    mesh = _term_phi(eqn.model.terms[1]).mesh
     model = eqn.model
 
     # Sparse array and b accessor call
@@ -235,7 +241,8 @@ end
 sync_gradient!(grad, mesh, config) = nothing
 
 @generated function _sync_gradients!(terms::TERMS, mesh, config) where {TERMS}
-    idx = [t for t in 1:fieldcount(TERMS) if has_face_source(fieldtype(TERMS, t))]
+    idx = [t for t in 1:fieldcount(TERMS)
+        if has_face_source(fieldtype(TERMS, t)) && hasfield(fieldtype(TERMS, t), :grad)]
     isempty(idx) && return :(nothing)
     calls = [:(sync_gradient!(terms[$t].grad, mesh, config)) for t in idx]
     :($(calls...); nothing)

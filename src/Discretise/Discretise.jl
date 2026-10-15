@@ -18,6 +18,7 @@ using XCALibre.Multithread: _sized
 using XCALibre.Mesh
 using XCALibre.Fields
 using XCALibre.ModelFramework
+using XCALibre.ModelFramework: _term_phi, _get_flux # not exported: term accessors
 # # using XCALibre.Energy
 
 
@@ -27,6 +28,7 @@ include("Discretise_2_generated_distretisation.jl")
 include("Discretise_3_boundary_conditions.jl")
 include("Discretise_4_assign_boundaries.jl")
 include("Discretise_5_apply_bcs.jl")
+include("Discretise_6_linearise.jl")
 
 include("boundary_conditions/0_definition_macro.jl")
 include("boundary_conditions/1_boundary_interpolation.jl")
@@ -62,5 +64,6 @@ include("boundary_conditions/slip.jl")
 include("boundary_conditions/slip_interpolation.jl")
 include("boundary_conditions/robin.jl")
 include("boundary_conditions/robin_interpolation.jl")
+include("boundary_conditions/affine.jl")
 
 end

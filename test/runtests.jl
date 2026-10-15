@@ -170,6 +170,10 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("unit_test_setFields.jl")
     end
 
+    @testset "Nonlinear operators" begin
+        include("unit_test_nonlinear_operators.jl")
+    end
+
     @testset "Robin Boundary Condition Unit Test" begin
         include("unit_test_robin.jl")
     end

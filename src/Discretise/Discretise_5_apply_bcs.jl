@@ -16,7 +16,7 @@ function _apply_boundary_conditions!(
     (; backend, workgroup) = hardware
 
     # Retriecve variables for function
-    mesh = model.terms[1].phi.mesh
+    mesh = _term_phi(model.terms[1]).mesh
     A = _A(eqn)
     b = _b(eqn, component)
 

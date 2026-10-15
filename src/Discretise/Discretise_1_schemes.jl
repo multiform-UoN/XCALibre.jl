@@ -341,3 +341,40 @@ end
     ac = flux # indexed with cIndex
     ac, zero(ac)
 end
+
+# NONLINEAR OPERATORS
+# A NonlinearOperator assembles like the operator it wraps (its map enters through linearize_physics).
+# An AffineOperator op(J φ + c) scales the coefficients of op by the cell jacobian J and moves the
+# offset c to the right-hand side: through scheme_source! for the cell and the face-source hook
+# for the neighbours. Face coefficients of scheme! depend only on the geometry and the operator.
+
+@inline _owner_cell(faces, fID, nID) = begin
+    owners = faces.ownerCells[fID]
+    owners[1] == nID ? owners[2] : owners[1]
+end
+
+@inline scheme!(term::NonlinearOperator, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime) =
+    scheme!(term.op, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
+@inline scheme_source!(term::NonlinearOperator, cells, cID, cIndex, prev, runtime, rho_prev) =
+    scheme_source!(term.op, cells, cID, cIndex, prev, runtime, rho_prev)
+has_face_source(::Type{<:NonlinearOperator{O}}) where {O} = has_face_source(O)
+@inline scheme_face_source!(term::NonlinearOperator, cells, faces, cID, nID, ns, fID) =
+    scheme_face_source!(term.op, cells, faces, cID, nID, ns, fID)
+
+@inline function scheme!(
+    term::AffineOperator, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
+    ac, an = scheme!(term.op, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
+    cID = _owner_cell(faces, fID, nID)
+    return ac * term.jacobian[cID], an * term.jacobian[nID]
+end
+
+@inline function scheme_source!(term::AffineOperator, cells, cID, cIndex, prev, runtime, rho_prev)
+    ac, b = scheme_source!(term.op, cells, cID, cIndex, term.reference, runtime, rho_prev)
+    return ac * term.jacobian[cID], b - ac * term.offset[cID]
+end
+
+has_face_source(::Type{<:AffineOperator}) = true
+@inline function scheme_face_source!(term::AffineOperator, cells, faces, cID, nID, ns, fID)
+    ac, an = scheme!(term.op, nothing, cells, faces, nID, ns, nothing, nothing, fID, nothing, nothing)
+    return -(ac * term.offset[cID] + an * term.offset[nID])
+end
