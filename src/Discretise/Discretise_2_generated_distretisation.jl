@@ -84,7 +84,7 @@ end
 
 
             # Call scheme generated fucntion
-            ac, an, _ = _scheme!(terms, nzval0, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
+            ac, an = _scheme!(terms, nzval0, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
             ac_sum += ac
             nzval0[nIndex] = an
             bf = _scheme_face_source!(terms, bf, cells, faces, i, nID, ns, fID)
@@ -160,7 +160,6 @@ end
 
         # For loop over workitem cell faces
         ac_sum = zero(F)
-        b_face = zero(F)
         bf = _face_source_init(terms, zero(F))
         for fi in faces_range
             # Retrieve indices for discretisation
@@ -170,9 +169,8 @@ end
             nIndex = face_nz[fi]
 
             # Call scheme generated fucntion
-            ac, an, ba = _scheme!(terms, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
+            ac, an = _scheme!(terms, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
             ac_sum += ac
-            b_face += ba
             nzval[nIndex] = an
             bf = _scheme_face_source!(terms, bf, cells, faces, i, nID, ns, fID)
         end
@@ -183,7 +181,7 @@ end
 
         # Call sources generated function
         b2 = _sources!(sources, volume, i)
-        b[i] = _add_face_source(b2 + b1 + b_face, bf, 1)
+        b[i] = _add_face_source(b2 + b1, bf, 1)
     end
 end
 
@@ -202,10 +200,8 @@ return_quote(x, t) = :(nothing)
     for t in 1:TN
         function_call_scheme = quote
             ac, an = scheme!(terms[$t], nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
-            bf = _scheme_face_rhs(terms[$t], nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
             AC += F(ac)
             AN += F(an)
-            B += F(bf)
         end
         push!(out.args, function_call_scheme)
     end
@@ -214,9 +210,8 @@ return_quote(x, t) = :(nothing)
         z = zero(F)
         AC = z
         AN = z
-        B = z
         $(out.args...)
-        return AC, AN, B
+        return AC, AN
     end
 end
 
@@ -246,7 +241,8 @@ end
 sync_gradient!(grad, mesh, config) = nothing
 
 @generated function _sync_gradients!(terms::TERMS, mesh, config) where {TERMS}
-    idx = [t for t in 1:fieldcount(TERMS) if has_face_source(fieldtype(TERMS, t))]
+    idx = [t for t in 1:fieldcount(TERMS)
+        if has_face_source(fieldtype(TERMS, t)) && hasfield(fieldtype(TERMS, t), :grad)]
     isempty(idx) && return :(nothing)
     calls = [:(sync_gradient!(terms[$t].grad, mesh, config)) for t in idx]
     :($(calls...); nothing)
@@ -392,7 +388,7 @@ end
 end
 
 # Split assembly and matrix-free evaluation for the PDE layer. Coefficients come from the
-# same _scheme! / _scheme_source! used by discretise!, including the affine face offset.
+# same _scheme! / _scheme_source! / _scheme_face_source! used by discretise!.
 function assemble_matrix!(eqn::ModelEquation{T,M,E,S,P}, config) where {T<:ScalarModel,M,E,S,P}
     (; hardware, runtime) = config
     (; backend, workgroup) = hardware
@@ -423,7 +419,7 @@ end
             ns = cell_nsign[fi]
             nID = cell_neighbours[fi]
             nIndex = face_nz[fi]
-            ac, an, _ = _scheme!(terms, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
+            ac, an = _scheme!(terms, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
             ac_sum += ac
             nzval[nIndex] = an
         end
@@ -463,20 +459,14 @@ end
         faces_range = cells.faces_range[i]
         volume = cells.volume[i]
         cIndex = diag_nz[i]
-        b_face = zero(F)
         bf = _face_source_init(terms, zero(F))
         for fi in faces_range
-            fID = cell_faces[fi]
-            ns = cell_nsign[fi]
-            nID = cell_neighbours[fi]
-            nIndex = face_nz[fi]
-            _, _, ba = _scheme!(terms, b, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
-            b_face += ba
-            bf = _scheme_face_source!(terms, bf, cells, faces, i, nID, ns, fID)
+            bf = _scheme_face_source!(
+                terms, bf, cells, faces, i, cell_neighbours[fi], cell_nsign[fi], cell_faces[fi])
         end
         _, b1 = _scheme_source!(terms, cells, i, cIndex, prev, runtime, rho_prev)
         b2 = _sources!(sources, volume, i)
-        b[i] = _add_face_source(b2 + b1 + b_face, bf, 1)
+        b[i] = _add_face_source(b2 + b1, bf, 1)
     end
 end
 
@@ -509,21 +499,19 @@ end
         cIndex = diag_nz[i]
         ac_sum = zero(F)
         an_phi = zero(F)
-        b_face = zero(F)
         bf = _face_source_init(terms, zero(F))
         for fi in faces_range
             fID = cell_faces[fi]
             ns = cell_nsign[fi]
             nID = cell_neighbours[fi]
             nIndex = face_nz[fi]
-            ac, an, ba = _scheme!(terms, r, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
+            ac, an = _scheme!(terms, r, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
             ac_sum += ac
             an_phi += an * prev[nID]
-            b_face += ba
             bf = _scheme_face_source!(terms, bf, cells, faces, i, nID, ns, fID)
         end
         ac, b1 = _scheme_source!(terms, cells, i, cIndex, prev, runtime, rho_prev)
         b2 = _sources!(sources, volume, i)
-        r[i] = (ac_sum + ac) * prev[i] + an_phi - _add_face_source(b_face + b1 + b2, bf, 1)
+        r[i] = (ac_sum + ac) * prev[i] + an_phi - _add_face_source(b1 + b2, bf, 1)
     end
 end

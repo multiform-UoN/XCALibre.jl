@@ -8,13 +8,13 @@ Laminar model definition for physics API.
 """
 struct Laminar{SF} <: AbstractDummyTurbulenceModel
     nut::SF
-end
+end 
 Adapt.@adapt_structure Laminar
 
 # Model type definition (hold equation definitions and internal data)
 struct LaminarModel{S1}
     state::S1 # required field for all turbulence models
-end
+end 
 Adapt.@adapt_structure LaminarModel
 
 # Model API constructor (pass user input as keyword arguments and process if needed)

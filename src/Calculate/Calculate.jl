@@ -8,7 +8,6 @@ using Atomix
 using KernelAbstractions
 import KernelAbstractions as KA
 using GPUArrays
-import KernelAbstractions as KA
 
 using LinearAlgebra
 using SparseMatricesCSR
@@ -24,8 +23,6 @@ using XCALibre.Discretise: convected_face_value # not exported: face value of a 
 using XCALibre.Solve
 using XCALibre.Solve: _index_type
 using XCALibre.Simulate
-
-import XCALibre.ModelFramework: ScalarEquation
 
 
 include("Calculate_0_gradient.jl")

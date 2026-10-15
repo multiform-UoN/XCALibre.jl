@@ -111,22 +111,62 @@ end
 
 @inline _map_value(map::NonlinearMap, value) = map.func(value)
 
-function _map_derivative(map::NonlinearMap, value, ad_backend)
-    if map.derivative !== nothing
-        return map.derivative(value)
-    elseif ad_backend === :forwarddiff
-        return ForwardDiff.derivative(map.func, value)
-    elseif ad_backend === :enzyme
-        return Enzyme.autodiff(Enzyme.Reverse, map.func, Enzyme.Active, Enzyme.Active(value))[1][1]
-    else
-        error("Unsupported AD backend: $ad_backend. Use :forwarddiff, :enzyme, or provide NonlinearMap(f, df).")
+# The AD backend is resolved on the host into a type, so the cell kernels below dispatch on it
+# instead of branching on a Symbol (which device code cannot do)
+struct ForwardDiffAD end
+struct EnzymeAD end
+_ad_backend(ad::Symbol) = ad === :forwarddiff ? ForwardDiffAD() : ad === :enzyme ? EnzymeAD() :
+    error("Unsupported AD backend: $ad. Use :forwarddiff, :enzyme, or provide NonlinearMap(f, df).")
+
+_map_derivative(map::NonlinearMap, value, ad_backend::Symbol) =
+    _map_derivative(map, value, _ad_backend(ad_backend))
+@inline _map_derivative(map::NonlinearMap{F,Nothing}, value, ::ForwardDiffAD) where {F} =
+    ForwardDiff.derivative(map.func, value)
+@inline _map_derivative(map::NonlinearMap{F,Nothing}, value, ::EnzymeAD) where {F} =
+    Enzyme.autodiff(Enzyme.Reverse, map.func, Enzyme.Active, Enzyme.Active(value))[1][1]
+@inline _map_derivative(map::NonlinearMap, value, ad) = map.derivative(value)
+
+# Enzyme's reverse mode is not available inside device kernels; ForwardDiff duals and analytic
+# derivatives are, so only Enzyme without an analytic derivative is restricted to the CPU
+_check_device_ad(map, ad, backend) = nothing
+_check_device_ad(map::NonlinearMap{F,Nothing}, ::EnzymeAD, backend) where {F} =
+    backend isa CPU || error("ad_backend=:enzyme runs on the CPU only; use :forwarddiff or " *
+        "NonlinearMap(f, df) on $(typeof(backend)).")
+
+# Cell-wise Newton linearisation f(v) ≈ f(v0) + f'(v0)(v - v0). Ghost cells of a distributed mesh
+# are evaluated from the (synchronised) ghost values of phi, so no extra halo exchange is needed.
+@kernel function _linearise_operator!(jacobian, offset, reference, phi, map, ad)
+    i = @index(Global)
+    @inbounds begin
+        v0 = phi[i]
+        r0 = _map_value(map, v0)
+        dv = _map_derivative(map, v0, ad)
+        reference[i] = r0
+        jacobian[i] = dv
+        offset[i] = r0 - dv * v0
     end
 end
 
-function _assert_cpu_linearization(mesh)
-    backend = _get_backend(mesh)
-    backend isa CPU && return nothing
-    error("linearize_physics currently supports CPU-resident nonlinear prepasses only. Provide a CPU field/template or implement a device AD path for backend $(typeof(backend)).")
+@kernel function _linearise_source!(k_imp, s_exp, phi, map, ad, sign, susp)
+    i = @index(Global)
+    @inbounds begin
+        v0 = phi[i]
+        r0 = _map_value(map, v0)
+        dv = _map_derivative(map, v0, ad)
+        if !susp || sign * dv > 0
+            k_imp[i] = dv
+            s_exp[i] = -sign * (r0 - dv * v0)
+        else
+            k_imp[i] = zero(dv)
+            s_exp[i] = -sign * r0
+        end
+    end
+end
+
+_linearise_launch(kernel, phi, args...) = begin
+    backend = _get_backend(phi.mesh)
+    kernel(backend)(args...; ndrange=length(phi.values))
+    KernelAbstractions.synchronize(backend)
 end
 
 # ---------------------------------------------------------------------------
@@ -136,7 +176,7 @@ end
 # DESIGN NOTE — assembled Jacobian vs JFNK
 # -----------------------------------------
 # linearize_physics is an ASSEMBLED JACOBIAN pre-pass:
-#   - iterates over all cells (CPU loop; asserted CPU-only via _assert_cpu_linearization)
+#   - one KernelAbstractions pass over all cells (CPU threads or GPU)
 #   - calls ForwardDiff.derivative or Enzyme.autodiff per cell for each NonlinearOperator
 #   - produces AffineOperator fields (jacobian, offset) used in the next discretise!/solve!
 #   - required for: assembled J·δu = -R Newton, ILU/block preconditioners
@@ -184,19 +224,14 @@ function linearize_physics(BCs, model_eqn::ModelEquation, other_fields=[]; susp=
             inner_op = term.op
             term_phi = inner_op.phi
             mesh = term_phi.mesh
-            _assert_cpu_linearization(mesh)
+            ad = _ad_backend(ad_backend)
+            _check_device_ad(map, ad, _get_backend(mesh))
 
             jacobian = ScalarField(mesh)
             offset = ScalarField(mesh)
             reference = ScalarField(mesh)
-            for i in eachindex(term_phi)
-                v0 = term_phi[i]
-                r0 = _map_value(map, v0)
-                dv = _map_derivative(map, v0, ad_backend)
-                reference[i] = r0
-                jacobian[i] = dv
-                offset[i] = r0 - dv * v0
-            end
+            _linearise_launch(_linearise_operator!, term_phi,
+                jacobian.values, offset.values, reference.values, term_phi.values, map, ad)
             return AffineOperator(inner_op, jacobian, offset, reference, map)
 
         # Case B: Standard Non-linear Implicit Source (NonLinearSi)
@@ -204,25 +239,13 @@ function linearize_physics(BCs, model_eqn::ModelEquation, other_fields=[]; susp=
             map = term.type.func
             term_phi = term.phi
             mesh = term_phi.mesh
-            _assert_cpu_linearization(mesh)
+            ad = _ad_backend(ad_backend)
+            _check_device_ad(map, ad, _get_backend(mesh))
 
             k_imp = ScalarField(mesh)
             s_exp = ScalarField(mesh)
-
-            for i in eachindex(term_phi)
-                v0 = term_phi[i]
-                r0 = _map_value(map, v0)
-                dv = _map_derivative(map, v0, ad_backend)
-                term_sign = term.sign
-
-                if !susp || term_sign * dv > 0
-                    k_imp[i] = dv
-                    s_exp[i] = -term_sign * (r0 - dv * v0)
-                else
-                    k_imp[i] = zero(dv)
-                    s_exp[i] = -term_sign * r0
-                end
-            end
+            _linearise_launch(_linearise_source!, term_phi,
+                k_imp.values, s_exp.values, term_phi.values, map, ad, term.sign, susp)
             push!(extra_sources, Source(s_exp))
             return Operator(k_imp, term_phi, term.sign, Si())
 

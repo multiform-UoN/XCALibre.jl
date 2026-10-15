@@ -4,6 +4,7 @@ using Accessors
 using SparseArrays
 using StaticArrays
 using Adapt
+# using CUDA
 using KernelAbstractions
 using Atomix
 using GPUArrays

@@ -256,9 +256,12 @@ has_face_source(::Type{<:Operator}) = false
 has_face_source(::Type{<:Operator{F,P,I,Divergence{S},G}}) where {F,P,I,S<:SecondOrderUpwind,G<:AbstractField} = true
 has_face_source(::Type{<:Operator{F,P,I,Divergence{LUSTDC}}}) where {F,P,I} = true
 has_face_source(::Type{<:Operator{F,P,I,Divergence{LUSTLU},G}}) where {F,P,I,G<:AbstractField} = true
-# the PDE-layer wrappers carry no explicit face source (their affine face offset goes through _scheme!)
-has_face_source(::Type{<:NonlinearOperator}) = false
-has_face_source(::Type{<:AffineOperator}) = false
+# PDE-layer wrappers: a nonlinear operator has the face source of the operator it wraps; an
+# affine operator always has one, its offset
+has_face_source(::Type{<:NonlinearOperator{O}}) where {O} = has_face_source(O)
+has_face_source(::Type{<:AffineOperator}) = true
+@inline scheme_face_source!(term::NonlinearOperator, cells, faces, cID, nID, ns, fID) =
+    scheme_face_source!(term.op, cells, faces, cID, nID, ns, fID)
 
 @inline function scheme_face_source!(
     term::Operator{F,P,I,Divergence{LinearUpwind}}, cells, faces, cID, nID, ns, fID
@@ -354,9 +357,6 @@ end
     owners[1] == nID ? owners[2] : owners[1]
 end
 
-@inline _scheme_face_rhs(term, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime) =
-    zero(eltype(nzval))
-
 @inline function scheme!(term::NonlinearOperator, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
     scheme!(term.op, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
 end
@@ -371,10 +371,10 @@ end
     return ac * term.jacobian[cID], an * term.jacobian[nID]
 end
 
-@inline function _scheme_face_rhs(
-    term::AffineOperator, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
-    ac, an = scheme!(term.op, nzval, cells, faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
-    cID = _owner_cell(faces, fID, nID)
+# The affine offset enters the right-hand side through the face-source hook. Face coefficients
+# of scheme! depend only on the geometry and the operator, so the matrix arguments are not needed.
+@inline function scheme_face_source!(term::AffineOperator, cells, faces, cID, nID, ns, fID)
+    ac, an = scheme!(term.op, nothing, cells, faces, nID, ns, nothing, nothing, fID, nothing, nothing)
     return -(ac * term.offset[cID] + an * term.offset[nID])
 end
 
@@ -390,7 +390,8 @@ end
     term, nzval, cell, face, cellN, ns, cID, nID, cIndex, nIndex, fID, prev, runtime)
     mesh = _term_phi(term).mesh
     ac, an = scheme!(term, nzval, mesh.cells, mesh.faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
-    bface = _scheme_face_rhs(term, nzval, mesh.cells, mesh.faces, nID, ns, cIndex, nIndex, fID, prev, runtime)
+    bface = has_face_source(typeof(term)) ?
+        scheme_face_source!(term, mesh.cells, mesh.faces, cID, nID, ns, fID) : zero(eltype(nzval))
     return ac, an, bface
 end
 

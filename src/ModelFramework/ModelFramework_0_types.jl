@@ -1,18 +1,16 @@
-export AbstractOperator, AbstractSource, AbstractEquation
-export Operator, OperatorTemplate, PDEOperator, ScaledFlux, Source, Src
-export Time, TimeTerm, Laplacian, Divergence, Si, CoupledSi, NonLinearSi
-export NonlinearMap, NonlinearOperator, NonlinearOperatorTemplate, AffineOperator
-export Biharmonic, _get_flux
-export GradDiv
-export ScalarGrad, VectorDiv
-export MonolithicSystem
-export Model, ScalarModel, VectorModel, ModelEquation, ScalarEquation, VectorEquation
+export AbstractOperator, AbstractSource, AbstractEquation   
+export Operator, Source, Src
+export Time, Laplacian, Divergence, Si
+export Model, ScalarEquation, VectorEquation, ModelEquation, ScalarModel, VectorModel
 export nzval_index
 export spindex, spindex_csc
-export nzadd!
-export extended_sparse_matrix_connectivity
+# PDE operator layer
+export OperatorTemplate, PDEOperator, ScaledFlux, TimeTerm, CoupledSi, NonLinearSi
+export NonlinearMap, NonlinearOperator, NonlinearOperatorTemplate, AffineOperator
+export Biharmonic, GradDiv, ScalarGrad, VectorDiv, _get_flux
+export MonolithicSystem, nzadd!, extended_sparse_matrix_connectivity
 
-# ABSTRACT TYPES
+# ABSTRACT TYPES 
 
 abstract type AbstractSource end
 abstract type AbstractOperator end
@@ -25,7 +23,7 @@ abstract type AbstractEquation end
 # `grad` holds the cell gradient of `phi` for schemes that reconstruct face values (`nothing` otherwise)
 struct Operator{F,P,S,T,G} <: AbstractOperator
     flux::F
-    phi::P
+    phi::P 
     sign::S
     type::T
     grad::G
