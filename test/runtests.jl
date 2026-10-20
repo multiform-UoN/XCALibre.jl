@@ -83,6 +83,10 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("test_DILU.jl")
     end
 
+    @testset "Bounding box and LES Empty distance" begin
+        include("unit_test_bounding_box.jl")
+    end
+
     @testset "AMG preconditioner freeze" begin
         @test BoomerAMG(freeze=7).freeze == 7 && GAMG(freeze=7).freeze == 7
         @test BoomerAMG().freeze == 10 && GAMG().freeze == 25
@@ -101,8 +105,28 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("unit_test_xvector.jl")
     end
 
+    @testset "Kernel index binding" begin
+        include("unit_test_kernel_index_pattern.jl")
+    end
+
     @testset "Laplace Unit Test" begin
         include("unit_test_laplace.jl")
+    end
+
+    @testset "Δt-consistent face flux" begin
+        include("unit_test_dt_consistent_flux.jl")
+    end
+
+    @testset "Crank-Nicolson temporal accuracy" begin
+        include("unit_test_crank_nicolson.jl")
+    end
+
+    @testset "Periodic mass flux" begin
+        include("unit_test_periodic_mass_flux.jl")
+    end
+
+    @testset "Transient verification examples" begin
+        include("unit_test_transient_verification_examples.jl")
     end
 
     @testset "Neumann Laplacian Sign Unit Test" begin
@@ -137,8 +161,16 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("unit_test_bicgstab_shadow.jl")
     end
 
+    @testset "Krylov shadow-vector breakdown" begin
+        include("unit_test_krylov_breakdown.jl")
+    end
+
     @testset "Mixed-precision linear solves" begin
         include("unit_test_mixed_precision.jl")
+    end
+
+    @testset "Unconverged linear solves warn" begin
+        include("unit_test_solve_warning.jl")
     end
 
     @testset "Wall Distance Unit Test" begin
@@ -152,6 +184,10 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
 
     @testset "Parallel cell updates Unit Test" begin
         include("unit_test_parallel_cell_updates.jl")
+    end
+
+    @testset "Deterministic boundary accumulation" begin
+        include("unit_test_boundary_accumulation.jl")
     end
   
     @testset "KOmegaLKE Diffusion Unit Test" begin
@@ -247,8 +283,14 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
         include("unit_test_field_average.jl")
         include("unit_test_field_rms.jl")
         include("unit_test_reynolds_stress.jl")
+        include("unit_test_qcriterion_window.jl")
         include("unit_test_post-process_transient.jl")
         include("unit_test_post-process_steady.jl")
+        include("unit_test_viscous_force_bcs.jl")
+    end
+
+    @testset "Probe" begin
+        include("unit_test_probe.jl")
     end
 
 
@@ -312,6 +354,7 @@ TEST_CASES_DIR = pkgdir(XCALibre, "test/0_TEST_CASES")
 
     @testset "Thin Film Solver" begin
         include(joinpath(TEST_CASES_DIR, "2d_EFM.jl"))
+        include("unit_test_film_dt_consistency.jl")
     end
 
     @testset "Distributed (MPI)" begin

@@ -15,11 +15,17 @@ _kernel_field(t::TensorField, m=()) = TensorField(
     _kernel_field(t.zx), _kernel_field(t.zy), _kernel_field(t.zz), m)
 
 _kernel_term(t::Operator, m) = Operator(
-    _kernel_field(t.flux), _kernel_field(t.phi, m), t.sign, t.type, _kernel_field(t.grad))
+    _kernel_field(t.flux), _kernel_field(t.phi, m), t.sign, _kernel_type(t.type), _kernel_field(t.grad))
 _kernel_term(t::NonlinearOperator, m) = NonlinearOperator(_kernel_term(t.op, m), t.map)
 _kernel_term(t::AffineOperator, m) = AffineOperator(
     _kernel_term(t.op, m), _kernel_field(t.jacobian), _kernel_field(t.offset),
     _kernel_field(t.reference), t.map)
+
+# same term with its operator type in kernel form (fields untouched), keeping nonlinear wrappers
+_typed_term(t::Operator) = Operator(t.flux, t.phi, t.sign, _kernel_type(t.type), t.grad)
+_typed_term(t::NonlinearOperator) = NonlinearOperator(_typed_term(t.op), t.map)
+_typed_term(t::AffineOperator) = AffineOperator(
+    _typed_term(t.op), t.jacobian, t.offset, t.reference, t.map)
 
 _kernel_model(model, mesh) = begin
     m = (; face_gDiff=mesh.face_gDiff)
@@ -29,9 +35,11 @@ _kernel_model(model, mesh) = begin
 end
 
 function discretise!(
-    eqn::ModelEquation{T,M,E,S,P}, prev, config; rho_prev=_get_flux(eqn.model.terms[1])) where {T<:VectorModel,M,E,S,P}
+    eqn::ModelEquation{T,M,E,S,P}, prev, config; rho_prev=_get_flux(eqn.model.terms[1]), time=nothing
+    ) where {T<:VectorModel,M,E,S,P}
     (; hardware, runtime) = config
     (; backend, workgroup) = hardware
+    prev = time_level!(eqn.model.terms[1], prev, rho_prev, time, config)
 
     # Retrieve variabels for defition
     mesh = _term_phi(eqn.model.terms[1]).mesh
@@ -105,10 +113,12 @@ end
 end
 
 function discretise!(
-    eqn::ModelEquation{T,M,E,S,P}, prev, config; rho_prev=_get_flux(eqn.model.terms[1])) where {T<:ScalarModel,M,E,S,P}
+    eqn::ModelEquation{T,M,E,S,P}, prev, config; rho_prev=_get_flux(eqn.model.terms[1]), time=nothing
+    ) where {T<:ScalarModel,M,E,S,P}
 
     (; hardware, runtime) = config
     (; backend, workgroup) = hardware
+    prev = time_level!(eqn.model.terms[1], prev, rho_prev, time, config)
 
     # Retrieve variabels for defition
     mesh = _term_phi(eqn.model.terms[1]).mesh

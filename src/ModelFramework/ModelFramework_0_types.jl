@@ -1,6 +1,6 @@
 export AbstractOperator, AbstractSource, AbstractEquation   
 export Operator, Source, Src
-export Time, Laplacian, Divergence, Si
+export Time, Laplacian, Divergence, Si, time_operator
 export Model, ScalarEquation, VectorEquation, ModelEquation, ScalarModel, VectorModel
 export nzval_index
 export spindex, spindex_csc
@@ -72,10 +72,18 @@ CoupledSi(flux, phi_source) = OperatorTemplate(flux, 1, CoupledSi(), phi_source)
 
 # operators
 
-struct Time{T} end
-function Adapt.adapt_structure(to, itp::Time{T}) where {T}
-    Time{T}()
+# `state` holds the old time levels of schemes that keep them (`nothing` otherwise)
+struct Time{T,S}
+    state::S
 end
+Time{T}() where T = Time{T,Nothing}(nothing)
+function Adapt.adapt_structure(to, itp::Time{T}) where {T}
+    state = adapt(to, itp.state)
+    Time{T,typeof(state)}(state)
+end
+
+# the Time operator of scheme T for field phi; schemes with old levels extend it
+time_operator(T, phi) = Time{T}()
 
 # Alias used by the operator-template API to make the role of a temporal term
 # explicit while preserving the existing fused Time{T} dispatch surface.
@@ -100,7 +108,7 @@ end
 
 Time{T}(flux) where T = OperatorTemplate(flux, 1, Time{T}())
 Time{T}(flux, phi) where T = Operator(
-    flux, phi, 1, Time{T}()
+    flux, phi, 1, time_operator(T, phi)
     )
 
 # Support passing ConstantScalar or Number as time coefficient (flux/storage)
@@ -110,7 +118,7 @@ Time{T}(flux::ConstantScalar) where T = OperatorTemplate(flux, 1, TimeTerm{T}())
 Time{T}(flux::Number) where T = OperatorTemplate(ConstantScalar(flux), 1, TimeTerm{T}())
 
 Time{T}(phi::AbstractField) where T = Operator(
-    ConstantScalar(one(_get_int(phi.mesh))), phi, 1, Time{T}()
+    ConstantScalar(one(_get_int(phi.mesh))), phi, 1, time_operator(T, phi)
     )
 
 Laplacian{T}(flux) where T = OperatorTemplate(flux, 1, Laplacian{T}())

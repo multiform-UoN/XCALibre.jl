@@ -25,7 +25,23 @@ print_tree(AbstractScheme) # hide
 |:-------|:------------|
 | SteadyState | sets the time derivative to zero |
 | Euler | First order implicit Euler scheme (implicit)|
-| CrankNicolson | Second order central scheme (implicit-explicit) |
+| CrankNicolson | Second order trapezoidal scheme (implicit); `CrankNicolson(ψ)` with an off-centring coefficient `ψ` |
+
+`CrankNicolson` evaluates every term of an equation at the new time level ``t^{n+1}`` and takes the time derivative as
+
+```math
+\left(\frac{\partial \rho\phi}{\partial t}\right)^{n+1} = (1 + \psi)\,\frac{(\rho\phi)^{n+1} - (\rho\phi)^n}{\Delta t^n} - \psi \left(\frac{\partial \rho\phi}{\partial t}\right)^n,
+```
+
+where the time derivative of the previous step is kept by the equation's `Time` term. With ``\psi = 1`` (`CrankNicolson` or `CrankNicolson(1)`) this is the second-order trapezoidal rule, also with time steps that change from step to step; ``\psi = 0`` is backward Euler, and values in between are first order but damp the oscillations that the trapezoidal rule leaves undamped (stiff modes such as diffusion across thin wall cells, or a non-solenoidal initial field). Boundary values, the pressure and the pressure correctors are all at ``t^{n+1}``.
+
+- The first time step of a run, including a run resumed with `restart` or continued with a second `run!`, is a backward-Euler step: the time derivative of the step before is not stored in the results.
+- Terms treated explicitly (the convecting face flux, the eddy viscosity and velocity gradient of the LES and transpose-stress terms, the lagged coefficients of the `KEquation`, `KOmega`, `KOmegaSST` and `KOmegaLKE` equations) are extrapolated to ``t^{n+1}`` from the two previous steps, using the time-step history, and are evaluated from the initial fields on the first step, so the eddy viscosity need not be initialised. This extrapolation is the only difference between `CrankNicolson(0)` and `Euler`.
+- The pressure of a `CrankNicolson(1)` run can alternate from step to step (an odd-even mode in time that the trapezoidal rule leaves undamped, started for example by an impulsive start); the velocity is unaffected, but the pressure solves take more iterations. `CrankNicolson(0.9)` damps it. In the face flux, half the step change of the old pressure gradient held in the time derivative takes the compact face gradient, so that this mode cannot grow on non-orthogonal meshes.
+- In `cpiso!` the density of the time terms must match the state equation at ``t^{n+1}``: second order needs `outer_loops` passes over momentum, energy and pressure per step (keyword of `run!` and `cpiso!`, default 1). About 8 passes reproduce the order in an acoustic test; each pass costs about one `Euler` time step.
+- `relax` below 1 changes the equations solved in each step and lowers the order for either scheme.
+- With `AdaptiveTimeStepping`, let the time step change gradually (`maxGrow` and `minShrink` close to 1).
+- Use one time scheme for every field: combining `CrankNicolson` and `Euler` raises an `ArgumentError`. `CrankNicolson` also raises an `ArgumentError` in `multiphase!` (explicit first-order volume-fraction transport), `filmModel!` (explicit first-order film coupling), `godunov!` (turbulence transport split from the explicit flow update) and the steady solvers.
 ---
 #### Laplacian schemes
 
@@ -165,6 +181,16 @@ Linear solvers in XCALibre.jl are provided by [Krylov.jl](https://github.com/Jul
 - `Bicgstab()` is a general purpose linear solver. Works well with non-symmetric matrices e.g. for `U`.
 - `Cg()` is particular strong with symmetric matrices e.g to solve the pressure equation.
 - `Gmres()` is a general solver. We have found it works best on the CPU backend.
+
+`Bicgstab()` and `Cgs()` break down when the residual becomes orthogonal to their shadow vector, which can happen when the initial residual is nonzero in a few cells only and the matrix couples them one way (upwind convection). Such a solve is repeated from its initial guess with a fixed, dense shadow vector; if it breaks down again, the field keeps its previous values and a warning is printed. Distributed solves continue from the last iterate instead, which restarts BiCGStab with the current residual as the shadow vector.
+
+A linear solve that stops without meeting its `atol` or `rtol` prints a warning naming the method, the equation (its label on distributed meshes, e.g. `[p]`, or the vector component in serial runs), why it stopped, the number of iterations and the final residual norm, next to the tolerances, e.g.
+
+```
+┌ Warning: Cg solve [p] did not converge in 1000 iterations (KSP_DIVERGED_ITS): KSP residual norm = 3.1e-7, atol = 1.0e-7, rtol = 0.0 (shown at most 10 times per equation)
+```
+
+This covers every solve path: Krylov.jl (the reason is Krylov.jl's status, e.g. `maximum number of iterations exceeded`), `AMG`, mixed precision (`MixedF32`, `MixedF16`) and PETSc, where every negative `KSPConvergedReason` is reported (iteration limit, divergence, breakdown, indefinite preconditioner, NaN). Serial solves report ‖b − Ax‖₂ of the returned solution; PETSc solves report the norm their stopping test used (the preconditioned natural norm for `Cg`). When a mixed-precision solve refines its correction (`rtol` below what the low precision attains), the warning is given when the refinement ends without meeting `rtol`, with ‖b − Ax‖₂ in full precision, and not for the individual corrections. Each equation shows at most 10 such warnings; on a distributed mesh rank 0 prints them.
 
 For more information on these solvers you can review the excellent documentation provided by the [Krylov.jl](https://github.com/JuliaSmoothOptimizers/Krylov.jl) team. 
 

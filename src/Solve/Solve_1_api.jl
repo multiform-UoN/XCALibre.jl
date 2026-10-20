@@ -6,7 +6,7 @@ export wrap_eqn
 export unwrap_eqn
 export is_distributed_mesh
 export is_report_rank
-export global_any, global_sum, global_min, n_owned_cells
+export global_any, global_sum, global_min, n_owned_cells, global_cell_index
 export solve_equation!
 export solve_preassembled!, residual, residual!, residual_norm, jvp! # PDE operator layer
 export AdaptiveTimeStepping, LocalTimeStepping
@@ -299,7 +299,7 @@ function solve_equation!(
     eqn::ModelEquation{T,M,E,S,P}, phi, phiBCs, solversetup, config; rho_prev=_get_flux(eqn.model.terms[1]), time=nothing, ref=nothing, irelax=nothing
     ) where {T<:ScalarModel,M,E,S,P}
 
-    discretise!(eqn, phi, config, rho_prev=rho_prev)  
+    discretise!(eqn, phi, config, rho_prev=rho_prev, time=time)
     apply_boundary_conditions!(eqn, phiBCs, nothing, time, config)
     if length(eqn.model.terms) == 1 && typeof(eqn.model.terms[1]) <: Laplacian
         make_symmetric!(eqn, config) # added this to test stability of periodic boundaries
@@ -321,7 +321,7 @@ function solve_equation!(
 
     mesh = psi.mesh
 
-    discretise!(psiEqn, psi, config, rho_prev=rho_prev)
+    discretise!(psiEqn, psi, config, rho_prev=rho_prev, time=time)
     update_equation!(psiEqn, config)
     
     apply_boundary_conditions!(psiEqn, psiBCs, xdir, time, config)
@@ -372,27 +372,31 @@ function _solve_system!(::FullPrecision, phiEqn, setup, result, component, confi
     apply_smoother!(setup.smoother, values, A, b, hardware)
 
     ldiv = is_ldiv(precon)
+    bw, x0 = _like_workspace(x, b), _like_workspace(x, values)
     krylov_solve!(
-        solver, opA, _like_workspace(x, b), _like_workspace(x, values);
+        solver, opA, bw, x0;
         _shadow(solver, P, ldiv, phiEqn, values, b, config)...,
         M=P, itmax=itmax, atol=atol, rtol=rtol, ldiv=ldiv, history=false
         )
-
-    # Perform explicit step for Crank-Nicholson. Otherwise simply update field with solution
-    if typeof(phiEqn.model.terms[1].type) <: Time{CrankNicolson}
-        xcal_foreach(x, config) do i 
-            x[i] = 2*x[i] - values[i]
-        end
+    # values still hold x₀: re-solve from there with a dense shadow (Fx is scratch until `residual`)
+    if _broke_down(solver, itmax)
+        krylov_solve!(
+            solver, opA, bw, x0; c=_fallback_shadow!(_like_workspace(x, phiEqn.equation.Fx)),
+            M=P, itmax=itmax, atol=atol, rtol=rtol, ldiv=ldiv, history=false
+            )
     end
 
-    ndrange = length(values)
-    kernel! = _sized(_copy!, backend, workgroup, ndrange)
-    kernel!(values, x)
-
-    iterations = Krylov.iteration_count(solver)
-    iterations == itmax && @warn "Maximum number of iterations reached!"
+    if _broke_down(solver, itmax)
+        @warn "$(nameof(typeof(solver))) broke down twice; the field keeps its previous values" maxlog=10
+    else
+        ndrange = length(values)
+        kernel! = _sized(_copy!, backend, workgroup, ndrange)
+        kernel!(values, x)
+    end
 
     res = residual(phiEqn, component, config)
+    Krylov.issolved(solver) || _warn_unconverged(phiEqn, setup, component,
+        solver.stats.status, Krylov.iteration_count(solver))
     return res
 end
 
@@ -401,12 +405,38 @@ function _solve_system!(::AbstractMixedPrecision, phiEqn, setup, result, compone
     A = _A(phiEqn)
     b = _b(phiEqn, component)
     apply_smoother!(setup.smoother, values, A, b, config.hardware)
-    # Crank-Nicolson's explicit step 2x_new - x_old is x_old + 2d
-    α = typeof(phiEqn.model.terms[1].type) <: Time{CrankNicolson} ? 2 : 1
-    iterations = mixed_solve!(phiEqn.solver, A, b, values, α, setup, config, result.mesh)
-    iterations ≥ setup.itmax && @warn "Maximum number of iterations reached!"
-    return residual(phiEqn, component, config)
+    iterations, converged, reason = mixed_solve!(phiEqn.solver, A, b, values, setup, config, result.mesh)
+    res = residual(phiEqn, component, config)
+    converged || _warn_unconverged(phiEqn, setup, component, reason, iterations)
+    return res
 end
+
+# NEW SECTION: reporting linear solves that stop without meeting atol/rtol
+
+# one message on every solve path (serial, mixed precision, AMG, PETSc), at most `maxlog` per equation
+const UNCONVERGED_MAXLOG = 10
+
+_solve_name(setup, tag) = string(nameof(typeof(setup.solver)),
+    setup.precision isa FullPrecision ? "" : " ($(nameof(typeof(setup.precision))))",
+    " solve", isempty(tag) ? "" : " [$tag]")
+
+function _warn_unconverged(name, reason, iterations, rnorm, norm_name, setup, id)
+    @warn "$name did not converge in $iterations iterations ($reason): $norm_name = " *
+        "$(Float64(rnorm)), atol = $(setup.atol), rtol = $(setup.rtol) (shown at most " *
+        "$UNCONVERGED_MAXLOG times per equation)" maxlog=UNCONVERGED_MAXLOG _id=id
+end
+
+# serial solves report ‖b - Ax‖₂ of the returned iterate, read from `residual`'s |b - Ax| in R
+function _warn_unconverged(eqn::ModelEquation, setup, component, reason, iterations)
+    tag = _component_tag(component)
+    _warn_unconverged(_solve_name(setup, tag), reason, iterations, norm(eqn.equation.R),
+        "‖b - Ax‖₂", setup, (:unconverged_solve, objectid(eqn.solver), tag))
+end
+
+_component_tag(::Nothing) = ""
+_component_tag(::XDir) = "x component"
+_component_tag(::YDir) = "y component"
+_component_tag(::ZDir) = "z component"
 
 # BiCGStab shadow vector M⁻¹(b - Ax0), as PETSc bcgs: Krylov.jl's default c = b suits only a zero
 # initial guess, and warm-started iterates degraded as steady runs converged (10M motorBike diverged).
@@ -638,6 +668,9 @@ global_min(v, mesh) = v
 
 # cells this rank updates and reduces over (owned cells first, then ghosts on a distributed mesh)
 n_owned_cells(mesh) = length(mesh.cells)
+
+# mesh-wide id of local cell i (its index in the undecomposed mesh): serial identity
+global_cell_index(mesh, i) = i
 
 function make_symmetric!(eqn, config)
     (; hardware) = config

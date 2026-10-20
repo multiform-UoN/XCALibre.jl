@@ -376,8 +376,12 @@ ranks than GPUs they share one and a warning says so.
 Output on a distributed mesh is written with `output=OpenFOAM()` in the decomposed layout; VTK has
 no decomposed writer, so a run that asks for VTK output with a positive `write_interval` stops with
 an error at its first write. Leave `write_interval=-1` when no output is needed.
-Runtime post-processing (`postprocess` in the `Configuration`, such as field averages) is not
-distributed yet: it is skipped on a distributed mesh, with a warning from rank 0.
+Runtime post-processing (`postprocess` in the `Configuration`) runs on distributed meshes as in
+serial. `FieldAverage`, `FieldRMS`, `ReynoldsStress` and `Qcriterion` update each rank's own cells,
+and with `output=OpenFOAM()` their fields are written to the processor directories next to `U` and
+`p`. A `Probe` is sampled by the rank that owns the cell nearest to its location (the same cell as
+in serial) and rank 0 writes the probe file. Create it with the distributed mesh,
+`Probe(model.momentum.U, mesh_dist; location=..., name=...)`, on every rank.
 The patch force integrals [`pressure_force`](@ref) and [`viscous_force`](@ref) are distributed and
 collective: every rank must call them (after or between `run!` calls), each rank integrates the faces
 of the patch it holds and every rank returns the sum over ranks. Calling them on one rank only hangs.
@@ -450,7 +454,9 @@ meaning:
   closest relative, block Jacobi with an ILU(0) (`DILU`, `ILU0GPU`) or ICC(0) (`IC0GPU`)
   factorisation of each rank's block. Each warns once that it is a substitute.
 - `atol`, `rtol`, `itmax`: the stopping tolerances and iteration limit of each linear solve, as in
-  serial.
+  serial. A solve that stops without meeting them warns, as in serial, with the equation label,
+  the `KSPConvergedReason`, the iteration count and PETSc's residual norm (see the linear solvers
+  section of the numerical setup page).
 - `convergence`: the residual target that stops the outer iteration, as in serial. It does not
   affect the linear solver.
 
