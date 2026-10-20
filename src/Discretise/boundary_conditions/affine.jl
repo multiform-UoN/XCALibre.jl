@@ -59,6 +59,15 @@ end
     cellID, zcellID, cells, faces, fID, i, component, time
 )
 
+# Empty patches carry no flux for the wrapped operator, so the affine form adds nothing either
+@inline (bc::Empty)(
+    term::AffineOperator, colval, rowptr, nzval,
+    cellID, zcellID, cells, faces, fID, i, component, time
+) = _affine_apply_identity_boundary(
+    bc, term, colval, rowptr, nzval,
+    cellID, zcellID, cells, faces, fID, i, component, time
+)
+
 @inline (bc::Zerogradient)(
     term::AffineOperator, colval, rowptr, nzval,
     cellID, zcellID, cells, faces, fID, i, component, time
