@@ -114,7 +114,7 @@ elapsed = @elapsed while t < t_end - 1e-9
     θold = [θ(soil, v) for v in hold]
     dt[] = Δt
     @. rhs.values = θold/Δt
-    ok, it, res = newton_step!(eqn, h, BCs.h, config; htol=htol)
+    ok, it, res = newton_step!(eqn, h, BCs.h, config; htol=htol, chop=true)
     nnewton += it
     if !ok
         h.values .= hold; dt[] = Δt/2; nrejected += 1

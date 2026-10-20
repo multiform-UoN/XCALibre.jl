@@ -45,15 +45,16 @@ function richards_operator(soil, Ks, Fg, dt, rhs, BCs, setup)
 end
 
 """
-    newton_step!(eqn, φ, BCs, config; htol, maxiter, damping_min)
+    newton_step!(eqn, φ, BCs, config; htol, maxiter, damping_min, chop=false)
 
 One time step of Newton's method for the field φ (the head h for Richards): exact Jacobian from linearize_physics, a linear
 solve per iteration, and a backtracking line search on the residual norm. A step is
-accepted at the first length ω = 1, 1/2, ... that does not increase |R|; if none down
+accepted at the first length ω = 1, 1/2, ... that decreases |R| (Armijo); if none down
 to `damping_min` does, the time step fails (the caller retries with a smaller Δt).
-Converged when max|Δh| < htol. Returns (converged, iterations, residuals).
+Converged when a full Newton step has max|Δh| < htol. With `chop` (for the head), a cell whose head would cross
+h = 0 stops at 0, as in richardsHeadFoam. Returns (converged, iterations, residuals).
 """
-function newton_step!(eqn, h, BCs, config; htol=1e-7, maxiter=20, damping_min=1/16)
+function newton_step!(eqn, h, BCs, config; htol=1e-7, maxiter=20, damping_min=1/16, chop=false)
     # h is any scalar field: the head for Richards, a concentration for transport
     res = Float64[]
     for it in 1:maxiter
@@ -65,20 +66,26 @@ function newton_step!(eqn, h, BCs, config; htol=1e-7, maxiter=20, damping_min=1/
         solve_equation!(lin, config)
         δ = h.values .- h0
         all(isfinite, δ) || (h.values .= h0; return (false, it, res))
+        # chop at saturation (Forsyth et al. 1995): a cell whose value would cross 0 stops
+        # there, so an update never jumps over the kink of C and kr at h = 0 (Richards only)
+        if chop
+            for i in eachindex(δ)
+                (h0[i] < 0 && h0[i] + δ[i] > 0 || h0[i] > 0 && h0[i] + δ[i] < 0) && (δ[i] = -h0[i])
+            end
+        end
         # a full step below the tolerance converges; its residual is at round-off
         maximum(abs, δ) < htol && return (true, it, res)
         ω = 1.0
         accepted = false
         while ω >= damping_min
             @. h.values = h0 + ω*δ
-            if norm(residual(eqn, config)) <= r0
+            if norm(residual(eqn, config)) <= (1 - 1e-4ω)*r0     # Armijo
                 accepted = true
                 break
             end
             ω /= 2
         end
         accepted || (h.values .= h0; return (false, it, res))
-        ω*maximum(abs, δ) < htol && return (true, it, res)
     end
     return (false, maxiter, res)
 end

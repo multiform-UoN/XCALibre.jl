@@ -50,6 +50,11 @@ richardsHeadFoam is 15–30× faster on this 100-cell column (compiled C++,
 tridiagonal solve, no Julia overhead), so in wall time the 1D case favours
 GMRTFoam.
 
+GMRTFoam's richardsHeadFoam now also has `linearisation newton`, with the same
+chop at saturation and Armijo line search. On this case both Newton
+implementations take the same path (864 steps, 3545 iterations, 0 rejected)
+and agree to |Δh| 5e-12.
+
 ## Langmuir sorption
 
 `langmuir_transport_1D.jl`: steady unit-gradient column (h = -0.2 m,
