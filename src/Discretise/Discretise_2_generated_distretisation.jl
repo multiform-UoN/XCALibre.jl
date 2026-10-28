@@ -14,18 +14,13 @@ _kernel_field(t::TensorField, m=()) = TensorField(
     _kernel_field(t.yx), _kernel_field(t.yy), _kernel_field(t.yz),
     _kernel_field(t.zx), _kernel_field(t.zy), _kernel_field(t.zz), m)
 
-_kernel_term(t::Operator, m) = Operator(
-    _kernel_field(t.flux), _kernel_field(t.phi, m), t.sign, _kernel_type(t.type), _kernel_field(t.grad))
-_kernel_term(t::NonlinearOperator, m) = NonlinearOperator(_kernel_term(t.op, m), t.map)
-_kernel_term(t::AffineOperator, m) = AffineOperator(
-    _kernel_term(t.op, m), _kernel_field(t.jacobian), _kernel_field(t.offset),
-    _kernel_field(t.reference), t.map)
+_kernel_term(t, m) = map_operator(t; fields=_kernel_field) do op
+    Operator(_kernel_field(op.flux), _kernel_field(op.phi, m), op.sign, _kernel_type(op.type),
+        _kernel_field(op.grad))
+end
 
 # same term with its operator type in kernel form (fields untouched), keeping nonlinear wrappers
-_typed_term(t::Operator) = Operator(t.flux, t.phi, t.sign, _kernel_type(t.type), t.grad)
-_typed_term(t::NonlinearOperator) = NonlinearOperator(_typed_term(t.op), t.map)
-_typed_term(t::AffineOperator) = AffineOperator(
-    _typed_term(t.op), t.jacobian, t.offset, t.reference, t.map)
+_typed_term(t) = map_operator(op -> Operator(op.flux, op.phi, op.sign, _kernel_type(op.type), op.grad), t)
 
 _kernel_model(model, mesh) = begin
     m = (; face_gDiff=mesh.face_gDiff)
@@ -251,12 +246,18 @@ end
 sync_gradient!(grad, mesh, config) = nothing
 
 @generated function _sync_gradients!(terms::TERMS, mesh, config) where {TERMS}
-    idx = [t for t in 1:fieldcount(TERMS)
-        if has_face_source(fieldtype(TERMS, t)) && hasfield(fieldtype(TERMS, t), :grad)]
+    idx = [t for t in 1:fieldcount(TERMS) if has_face_source(fieldtype(TERMS, t))]
     isempty(idx) && return :(nothing)
-    calls = [:(sync_gradient!(terms[$t].grad, mesh, config)) for t in idx]
+    calls = [:(_sync_term_gradient!(terms[$t], mesh, config)) for t in idx]
     :($(calls...); nothing)
 end
+
+# the gradient sits on the innermost Operator, also under a nonlinear or affine wrapper
+_sync_term_gradient!(t::Operator, mesh, config) = _sync_term_gradient!(t.grad, mesh, config)
+_sync_term_gradient!(t::Union{NonlinearOperator,AffineOperator}, mesh, config) =
+    _sync_term_gradient!(t.op, mesh, config)
+_sync_term_gradient!(::Nothing, mesh, config) = nothing
+_sync_term_gradient!(grad, mesh, config) = sync_gradient!(grad, mesh, config)
 
 # Scheme source generated function definition
 @generated function _scheme_source!(terms::TERMS, cells::AbstractVector{<:Cell{F}}, cID, cIndex, prev::P, runtime, rho_prev) where {TERMS,F,P}

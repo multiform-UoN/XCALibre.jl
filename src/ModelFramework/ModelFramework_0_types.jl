@@ -6,7 +6,7 @@ export nzval_index
 export spindex, spindex_csc
 # PDE operator layer
 export OperatorTemplate, PDEOperator, ScaledFlux, TimeTerm, CoupledSi, NonLinearSi
-export NonlinearMap, NonlinearOperator, NonlinearOperatorTemplate, AffineOperator
+export NonlinearMap, NonlinearOperator, NonlinearOperatorTemplate, AffineOperator, map_operator
 export Biharmonic, GradDiv, ScalarGrad, VectorDiv, _get_flux
 export MonolithicSystem, nzadd!, extended_sparse_matrix_connectivity
 
@@ -175,6 +175,16 @@ struct AffineOperator{O<:Operator, J, C, R, Fn} <: AbstractOperator
     map::Fn
 end
 Adapt.@adapt_structure AffineOperator
+
+# Rebuild a term with its innermost `Operator` replaced by `f(op)`, keeping the PDE-layer wrappers
+# (`NonlinearOperator`, `AffineOperator`); `fields` maps the extra fields an `AffineOperator` holds.
+# Code that rebuilds terms (kernel forms, scheme or field rebinding) should go through this rather
+# than `Operator(t.flux, t.phi, ...)`, which silently drops the wrappers of nonlinear terms.
+map_operator(f, t::Operator; fields=identity) = f(t)
+map_operator(f, t::NonlinearOperator; fields=identity) =
+    NonlinearOperator(map_operator(f, t.op; fields), t.map)
+map_operator(f, t::AffineOperator; fields=identity) = AffineOperator(
+    map_operator(f, t.op; fields), fields(t.jacobian), fields(t.offset), fields(t.reference), t.map)
 
 _get_flux(term::Operator) = term.flux
 _get_flux(term::AffineOperator) = _get_flux(term.op)

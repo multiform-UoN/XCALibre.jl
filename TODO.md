@@ -96,6 +96,15 @@ Mitigation:
 whether a source was scalar or vector. Similar wrapper combinations could
 expose more hidden assumptions.
 
+Status: term rebuilds go through `map_operator(f, term; fields)`, which
+applies `f` to the innermost `Operator` and keeps `NonlinearOperator` and
+`AffineOperator` (kernel and typed forms, `decompose`, gradient sync). A
+tripwire in `test/unit_test_operator_wrappers.jl` fails when a new
+`Operator(t.flux, ...)` rebuild appears in `src`, so an upstream rewrite of
+the term mapping is caught at merge time. When upstream changes how terms
+are mapped, wrap its new constructor call in `map_operator` rather than
+adding wrapper methods by hand.
+
 Mitigation:
 - Define central traits such as `base_flux_type`, `value_rank`,
   `operator_kind`, `bound_field` and `coefficient_type`.
@@ -142,6 +151,17 @@ Mitigation:
 The current block sparsity builder allocates mesh-neighbour connectivity for
 every possible variable block, including structurally zero blocks. The
 default linear solve has no field-aware block preconditioner.
+
+Status: the block pattern is taken from the terms of each equation
+(`_monolithic_block_pattern`, diagonal blocks always kept) and only active
+blocks are allocated. `newton_solve!` takes `equilibrate=true` like
+`solve_monolithic!`, and both take `preconditioner=:blockjacobi`
+(`MonolithicBlockJacobi`: exact LU per field block, diagonal fallback for a
+singular block). Newton returns `linear_iterations`. Tests:
+`test/unit_test_monolithic_scaling.jl`. Open: a Schur-complement or
+pressure-convection preconditioner for saddle-point (Stokes, viscoelastic)
+blocks, where block-Jacobi only preconditions the velocity; AMG instead of
+LU per block for larger meshes; reuse of the sparsity across Newton steps.
 
 Mitigation:
 - Declare the block dependency graph before allocating sparsity.

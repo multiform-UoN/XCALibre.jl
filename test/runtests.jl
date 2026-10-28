@@ -85,6 +85,8 @@ const TIERS = [
         "unit_test_split_assembly.jl",
         "unit_test_ad_backends.jl",
         "unit_test_operator_ordering.jl",
+        "unit_test_operator_wrappers.jl",
+        "unit_test_monolithic_scaling.jl",
     ],
     "cases" => [
         "cases/test_2d_laplace_steady.jl",

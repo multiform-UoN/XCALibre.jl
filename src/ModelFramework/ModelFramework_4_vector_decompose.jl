@@ -71,7 +71,11 @@ function decompose(eqn::ModelEquation{VectorModel, M, E, S, P}) where {M,E,S,P}
         # 3. Re-bind Operators to the scalar component field
         # We must attach the mesh to phi_comp since VectorField components drop it
         phi_with_mesh = ScalarField(phi_comp.values, psi.mesh)
-        comp_terms = Tuple(Operator(t.flux, phi_with_mesh, t.sign, t.type) for t in eqn.model.terms)
+        # map_operator keeps Nonlinear/Affine wrappers; the vector gradient does not apply to a
+        # component, so a reconstructing scheme falls back to its gradient-free form here
+        comp_terms = Tuple(
+            map_operator(op -> Operator(op.flux, phi_with_mesh, op.sign, op.type), t)
+            for t in eqn.model.terms)
 
         comp_model = Model{length(comp_terms), length(comp_sources)}(
             comp_terms,

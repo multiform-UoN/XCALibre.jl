@@ -1,5 +1,5 @@
 export solve_monolithic!, newton_solve!, monolithic_residual!, set_fields!, update_fields!
-export apply_monolithic_reference!
+export apply_monolithic_reference!, MonolithicBlockJacobi
 export get_sparse_matrix
 
 function get_sparse_matrix(A_csr)
@@ -13,16 +13,18 @@ function get_sparse_matrix(A_csr)
     return sparse(I_row, csr.colval, csr.nzval, size(csr)...)
 end
 
-function _monolithic_solver_setup(config, use_preconditioner)
-    config.solvers === nothing && return (solver=Gmres(), preconditioner=nothing)
+# `preconditioner` (keyword of the monolithic solvers) overrides the field setup, e.g. :blockjacobi
+function _monolithic_solver_setup(config, use_preconditioner, preconditioner=nothing)
+    config.solvers === nothing && return (solver=Gmres(), preconditioner=preconditioner)
     setup = first(config.solvers)
-    setup === nothing && return (solver=Gmres(), preconditioner=nothing)
-    preconditioner = use_preconditioner ? setup.preconditioner : nothing
+    setup === nothing && return (solver=Gmres(), preconditioner=preconditioner)
+    preconditioner === nothing && use_preconditioner && (preconditioner = setup.preconditioner)
     return (solver=setup.solver, preconditioner=preconditioner)
 end
 
 function _monolithic_preconditioner(preconditioner_type, A_op, mesh, config)
     preconditioner_type === nothing && return (M=I, ldiv=false, storage=nothing)
+    preconditioner_type isa Symbol && return _block_preconditioner(preconditioner_type, A_op, mesh, config)
 
     P = Preconditioner{typeof(preconditioner_type)}(A_op)
     update_preconditioner!(P, mesh, config)
@@ -88,10 +90,26 @@ function _csr_residual_norm(A_csr::SparseMatricesCSR.SparseMatrixCSR, x, b, nzva
     return sqrt(accum)
 end
 
-function _build_monolithic_sparsity(n_vars, n_cells, mesh, TF)
+# Block (i, j) is structurally nonzero when equation i has a term acting on field j. Diagonal
+# blocks are always kept: reference rows and Dirichlet rows of an equation with no self term
+# (e.g. continuity) write there.
+function _monolithic_block_pattern(sys::MonolithicSystem)
+    (; equations, n_vars, field_to_idx) = sys
+    active = falses(n_vars, n_vars)
+    for i in 1:n_vars
+        active[i, i] = true
+        for term in equations[i].model.terms
+            active[i, field_to_idx[objectid(_term_phi(term).values)]] = true
+        end
+    end
+    return active
+end
+
+function _build_monolithic_sparsity(n_vars, n_cells, mesh, TF, active=trues(n_vars, n_vars))
     I_idx = Int[]
     J_idx = Int[]
     for i in 1:n_vars, j in 1:n_vars
+        active[i, j] || continue
         row_off = (i - 1) * n_cells
         col_off = (j - 1) * n_cells
         for cID in 1:n_cells
@@ -112,6 +130,51 @@ function _build_monolithic_sparsity(n_vars, n_cells, mesh, TF)
 end
 
 """
+    MonolithicBlockJacobi(A_csr, n_vars, n_cells)
+
+Field-split (block-Jacobi) preconditioner of a monolithic matrix: an exact sparse LU of each
+diagonal block (i, i), applied with `ldiv!`. A block whose LU fails, such as the zero pressure block
+of a saddle-point system, uses the inverse of its diagonal (identity where that is zero), so for
+Stokes-type systems this is a velocity-only preconditioner, not a Schur complement. CPU only.
+
+Select it with `preconditioner=:blockjacobi` in `solve_monolithic!` or `newton_solve!`.
+"""
+struct MonolithicBlockJacobi{R,F}
+    ranges::R
+    factors::F
+end
+
+function _block_factor(B)
+    F = lu(B; check=false)
+    issuccess(F) && return F
+    d = Vector(diag(B))
+    return Diagonal(map(x -> iszero(x) ? one(x) : x, d))
+end
+
+function MonolithicBlockJacobi(A_csr::SparseMatricesCSR.SparseMatrixCSR, n_vars, n_cells)
+    A = get_sparse_matrix(A_csr)
+    ranges = [((i - 1) * n_cells + 1):(i * n_cells) for i in 1:n_vars]
+    factors = Tuple(_block_factor(A[r, r]) for r in ranges)
+    return MonolithicBlockJacobi(ranges, factors)
+end
+
+function LinearAlgebra.ldiv!(y::AbstractVector, P::MonolithicBlockJacobi, x::AbstractVector)
+    for (r, F) in zip(P.ranges, P.factors)
+        y[r] .= F \ x[r]
+    end
+    return y
+end
+
+function _block_preconditioner(kind::Symbol, A_op, mesh, config)
+    kind === :blockjacobi || throw(ArgumentError(
+        "Unknown monolithic preconditioner :$kind (valid: :blockjacobi, or a field preconditioner)"))
+    A_csr = parent(A_op)
+    n_cells = length(mesh.cells)
+    P = MonolithicBlockJacobi(A_csr, size(A_csr, 1) ÷ n_cells, n_cells)
+    return (M=P, ldiv=true, storage=P)
+end
+
+"""
     assemble_monolithic_system(sys::MonolithicSystem, bcs_list, config) -> (A_csr, b_mono)
 """
 function assemble_monolithic_system(sys::MonolithicSystem, bcs_list, config)
@@ -119,7 +182,7 @@ function assemble_monolithic_system(sys::MonolithicSystem, bcs_list, config)
     mesh = phi_list[1].mesh
     TF = _get_float(mesh)
 
-    A_csr = _build_monolithic_sparsity(n_vars, n_cells, mesh, TF)
+    A_csr = _build_monolithic_sparsity(n_vars, n_cells, mesh, TF, _monolithic_block_pattern(sys))
     N = n_vars * n_cells
     b_mono = zeros(TF, N)
 
@@ -243,8 +306,8 @@ solve_monolithic!(sys::MonolithicSystem, config; kwargs...) =
 """
 function solve_monolithic!(
     sys::MonolithicSystem, bcs_list, config;
-    reference=nothing, diagnostics=false, use_preconditioner=false, equilibrate=false,
-    itmax=5000, atol=1e-12, rtol=1e-10
+    reference=nothing, diagnostics=false, use_preconditioner=false, preconditioner=nothing,
+    equilibrate=false, itmax=5000, atol=1e-12, rtol=1e-10
 )
     (; hardware, runtime) = config
     TF = _get_float(sys.phi_list[1].mesh)
@@ -258,7 +321,7 @@ function solve_monolithic!(
     # are not automatically good preconditioners for saddle-point block systems.
     # Some low-level unit tests construct a minimal Configuration with no
     # per-field solver setup; GMRES with no preconditioner is the safest default.
-    setup = _monolithic_solver_setup(config, use_preconditioner)
+    setup = _monolithic_solver_setup(config, use_preconditioner, preconditioner)
     solver_type = setup.solver
     ws = _workspace(solver_type, b_mono)
 
@@ -335,6 +398,8 @@ end
     newton_solve!(sys::MonolithicSystem, [bcs_list], config; kwargs...)
 
 Solve a CPU monolithic block system with assembled Newton linearisation.
+`equilibrate=true` row/column-scales each correction system; `preconditioner=:blockjacobi`
+uses `MonolithicBlockJacobi` (exact LU of each field block) for the Krylov solve.
 Operators explicitly bound to another scalar field are routed to the
 corresponding off-diagonal block. General multivariate nonlinear maps and GPU
 linearisation are not yet supported.
@@ -346,7 +411,7 @@ function newton_solve!(
     sys::MonolithicSystem, bcs_list, config;
     tol=1e-8, maxiter=config.runtime.iterations, damping=1.0,
     susp=false, ad_backend=:forwarddiff, verbose=false,
-    reference=nothing, use_preconditioner=false,
+    reference=nothing, use_preconditioner=false, preconditioner=nothing, equilibrate=false,
     itmax=5000, atol=1e-12, rtol=1e-10, fail_on_linear_failure=false
 )
     0 < damping <= 1 ||
@@ -354,6 +419,7 @@ function newton_solve!(
     (; n_vars, n_cells) = sys
     TF = _get_float(sys.phi_list[1].mesh)
     history = TF[]
+    linear_iterations = Int[]
     converged = false
     N = n_vars * n_cells
     active_bcs = bcs_list === nothing ?
@@ -362,7 +428,7 @@ function newton_solve!(
         throw(ArgumentError("Expected one BC collection per scalar monolithic equation."))
 
     # Heuristic: use the solver from the first field for the monolithic system.
-    setup = _monolithic_solver_setup(config, use_preconditioner)
+    setup = _monolithic_solver_setup(config, use_preconditioner, preconditioner)
     solver_type = setup.solver
     ws = _workspace(solver_type, zeros(TF, N))
     r_mono = zeros(TF, N)
@@ -399,6 +465,9 @@ function newton_solve!(
         A_homo, b_homo = assemble_monolithic_system(lin_sys, homo_bcs_list, config)
         @. b_homo = -r_mono
         _apply_newton_reference_step!(A_homo, b_homo, r_mono, lin_sys, reference)
+        # row/column equilibration of the correction system (fields of very different scale,
+        # e.g. Biot); the step is mapped back with the column scale below
+        col_scale = equilibrate ? _equilibrate_csr!(A_homo, b_homo) : nothing
 
         # 4. Solve the linear system
         A_op = SparseXCSR(A_homo)
@@ -410,6 +479,7 @@ function newton_solve!(
             itmax=itmax, history=true
         )
 
+        push!(linear_iterations, Krylov.iteration_count(ws))
         if !ws.stats.solved
             message = "Monolithic Newton inner $(typeof(solver_type)) did not converge (niter=$(Krylov.iteration_count(ws)))"
             if fail_on_linear_failure
@@ -420,8 +490,10 @@ function newton_solve!(
         end
 
         # 5. Update Fields
-        update_fields!(sys, ws.x, damping)
+        dx = equilibrate ? col_scale .* ws.x : ws.x
+        update_fields!(sys, dx, damping)
     end
 
-    return (converged=converged, iterations=length(history), residuals=history)
+    return (converged=converged, iterations=length(history), residuals=history,
+            linear_iterations=linear_iterations)
 end
