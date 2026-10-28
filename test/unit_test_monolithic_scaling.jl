@@ -2,6 +2,9 @@ using XCALibre
 using Test
 using LinearAlgebra
 using SparseArrays
+using SparseMatricesCSR
+using Krylov
+using Random
 
 grids_dir = pkgdir(XCALibre, "examples/0_GRIDS")
 mesh = UNV2D_mesh(joinpath(grids_dir, "laplace_2d_mesh.unv"))
@@ -63,6 +66,8 @@ end
     @test bj.linear[end].gmres_iterations <= 3
     @test bj.linear[end].gmres_iterations < plain.linear[end].gmres_iterations
 
+    @test_throws ArgumentError solve_monolithic!(sys, config; preconditioner=:unknown)
+    # neither block is weaker than its coupling: :schur refuses to guess
     @test_throws ArgumentError solve_monolithic!(sys, config; preconditioner=:schur)
 end
 
@@ -84,4 +89,71 @@ end
     @test length(result.linear_iterations) == result.iterations - 1
     # one exact block: every correction solve is a single preconditioned iteration
     @test all(<=(2), result.linear_iterations)
+end
+
+@testset "Schur preconditioner algebra" begin
+    # [D Bᵀ; B C] with D diagonal: S = C - B D⁻¹ Bᵀ is the exact Schur complement, so the block
+    # upper-triangular preconditioner leaves GMRES two iterations
+    n = 30
+    D = spdiagm(0 => 2.0 .+ (1:n) ./ n)
+    B = 0.1 * sprand(MersenneTwister(1), n, n, 0.2) + 0.1I
+    C = spdiagm(0 => fill(1e-3, n))
+    A = [D B'; B C]
+    A_csr = SparseMatrixCSR(A)
+    P = MonolithicSchur(A_csr, 2, n, [2])
+    z = collect(range(-1, 1; length=2n))
+    S = C - B * (D \ B')
+    Pz = vcat(D * z[1:n] + B' * z[n+1:end], S * z[n+1:end])
+    y = similar(z)
+    ldiv!(y, P, Pz)
+    @test y ≈ z
+    rhs = A * ones(2n)
+    x, stats = Krylov.gmres(A, rhs; M=P, ldiv=true, atol=1e-12, rtol=1e-12)
+    @test stats.solved
+    @test stats.niter <= 2
+    @test x ≈ ones(2n)
+    @test XCALibre.Solve._auto_schur_blocks(A_csr, 2, n) == [2]
+end
+
+@testset "Schur preconditioner on weakly stabilised Stokes" begin
+    u = ScalarField(mesh_dev); initialise!(u, 0.0)
+    v = ScalarField(mesh_dev); initialise!(v, 0.0)
+    p = ScalarField(mesh_dev); initialise!(p, 0.0)
+    BCs = assign(
+        region=mesh_dev,
+        (
+            u = [Dirichlet(:upper_wall, 1.0), Dirichlet(:left_wall, 0.0),
+                 Dirichlet(:right_wall, 0.0), Dirichlet(:bottom_wall, 0.0)],
+            v = [Dirichlet(name, 0.0) for name in walls],
+            p = [Zerogradient(name) for name in walls],
+        )
+    )
+    one_cst = ConstantScalar(1.0)
+    L_u = (-Laplacian{Linear}(one_cst) + ScalarGrad{Linear,1}(one_cst, p) == Source(0.0)) → BCs.u
+    L_v = (-Laplacian{Linear}(one_cst) + ScalarGrad{Linear,2}(one_cst, p) == Source(0.0)) → BCs.v
+    L_p = (
+        -Laplacian{Linear}(ConstantScalar(1e-4))
+        + VectorDiv{Linear,1}(one_cst, u) + VectorDiv{Linear,2}(one_cst, v)
+        == Source(0.0)
+    ) → BCs.p
+    sys = MonolithicSystem([L_u(u), L_v(v), L_p(p)], [u, v, p])
+    config = scaling_config((:u, :v, :p), BCs)
+    reference = (3, 0.0, 1)
+
+    A_csr, rhs = XCALibre.Solve.assemble_monolithic_system(sys, nothing, config)
+    XCALibre.Solve.apply_monolithic_reference!(A_csr, rhs, sys, 3, 0.0, 1)
+    x_direct = get_sparse_matrix(A_csr) \ rhs
+    @test XCALibre.Solve._auto_schur_blocks(A_csr, 3, sys.n_cells) == [3]
+
+    its = Dict{String,Int}()
+    for (name, pc) in [("blockjacobi", :blockjacobi), ("schur", SchurSplit(p)), ("auto", :schur)]
+        foreach(f -> initialise!(f, 0.0), (u, v, p))
+        d = solve_monolithic!(sys, config; reference, preconditioner=pc, diagnostics=true)
+        x = vcat(u.values, v.values, p.values)
+        @test d.linear[end].solved
+        @test norm(x - x_direct) <= 1e-7 * norm(x_direct)
+        its[name] = d.linear[end].gmres_iterations
+    end
+    @test its["schur"] == its["auto"]
+    @test its["schur"] < its["blockjacobi"]
 end

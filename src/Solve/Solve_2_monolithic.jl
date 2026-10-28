@@ -1,5 +1,5 @@
 export solve_monolithic!, newton_solve!, monolithic_residual!, set_fields!, update_fields!
-export apply_monolithic_reference!, MonolithicBlockJacobi
+export apply_monolithic_reference!, MonolithicBlockJacobi, MonolithicSchur, SchurSplit
 export get_sparse_matrix
 
 function get_sparse_matrix(A_csr)
@@ -22,9 +22,10 @@ function _monolithic_solver_setup(config, use_preconditioner, preconditioner=not
     return (solver=setup.solver, preconditioner=preconditioner)
 end
 
-function _monolithic_preconditioner(preconditioner_type, A_op, mesh, config)
+function _monolithic_preconditioner(preconditioner_type, A_op, mesh, config, sys=nothing)
     preconditioner_type === nothing && return (M=I, ldiv=false, storage=nothing)
-    preconditioner_type isa Symbol && return _block_preconditioner(preconditioner_type, A_op, mesh, config)
+    preconditioner_type isa Union{Symbol,SchurSplit} &&
+        return _block_preconditioner(preconditioner_type, A_op, mesh, config, sys)
 
     P = Preconditioner{typeof(preconditioner_type)}(A_op)
     update_preconditioner!(P, mesh, config)
@@ -135,7 +136,7 @@ end
 Field-split (block-Jacobi) preconditioner of a monolithic matrix: an exact sparse LU of each
 diagonal block (i, i), applied with `ldiv!`. A block whose LU fails, such as the zero pressure block
 of a saddle-point system, uses the inverse of its diagonal (identity where that is zero), so for
-Stokes-type systems this is a velocity-only preconditioner, not a Schur complement. CPU only.
+Stokes-type systems this is a velocity-only preconditioner: use `MonolithicSchur` there. CPU only.
 
 Select it with `preconditioner=:blockjacobi` in `solve_monolithic!` or `newton_solve!`.
 """
@@ -165,12 +166,133 @@ function LinearAlgebra.ldiv!(y::AbstractVector, P::MonolithicBlockJacobi, x::Abs
     return y
 end
 
-function _block_preconditioner(kind::Symbol, A_op, mesh, config)
-    kind === :blockjacobi || throw(ArgumentError(
-        "Unknown monolithic preconditioner :$kind (valid: :blockjacobi, or a field preconditioner)"))
+"""
+    SchurSplit(fields...; approximation=:diag)
+    SchurSplit()
+
+Selects `MonolithicSchur` with `fields` (scalar fields of the system, or their block indices) as
+the constraint fields, e.g. `SchurSplit(p)` for Stokes. `SchurSplit()` and `preconditioner=:schur`
+pick them automatically (see `MonolithicSchur`). `approximation` is the A⁻¹ inside S: `:diag`
+(SIMPLE) or `:rowsum` (SIMPLEC, absolute row sums of A).
+"""
+struct SchurSplit{F<:Tuple}
+    fields::F
+    approximation::Symbol
+end
+SchurSplit(fields...; approximation=:diag) = SchurSplit(fields, approximation)
+
+"""
+    MonolithicSchur(A_csr, n_vars, n_cells, schur_blocks)
+
+Block upper-triangular Schur-complement preconditioner of a monolithic saddle-point system. The
+unknowns are split into primary fields (velocity, stresses, displacement) and constraint fields
+(`schur_blocks`, e.g. pressure), with blocks A (primary), Bᵀ (primary rows, constraint columns),
+B and C (constraint rows):
+
+    P = [A  Bᵀ]        S = C - B diag(A)⁻¹ Bᵀ
+        [0  S ]
+
+A is factorised exactly (sparse LU of the whole primary block, including the coupling between
+primary fields); S is the SIMPLE-type approximation of the Schur complement, assembled and
+factorised. With an exact S, GMRES on P⁻¹ converges in two iterations; the diagonal approximation
+of A⁻¹ inside S (`approximation=:diag`, SIMPLE, or `:rowsum`, SIMPLEC) is what the iteration
+count measures. A singular S (a pressure without a reference
+row or gauge) is shifted by 1e-10 of its largest diagonal entry. CPU only.
+
+Automatic selection (`preconditioner=:schur`): a field block is a constraint block when its
+diagonal block is weaker than its coupling, mean row sum of |A_ii| < mean row sum of |A_ij|, j ≠ i
+(the pressure row of Stokes: a small stabilisation against the divergence).
+"""
+struct MonolithicSchur{FA,FS,M,V}
+    primary::Vector{Int}
+    schur::Vector{Int}
+    FA::FA
+    FS::FS
+    Bt::M
+    xp::V
+    xs::V
+end
+
+function MonolithicSchur(A_csr::SparseMatricesCSR.SparseMatrixCSR, n_vars, n_cells, schur_blocks;
+                         approximation=:diag)
+    isempty(schur_blocks) && throw(ArgumentError("Schur preconditioner: no constraint field"))
+    length(schur_blocks) < n_vars || throw(ArgumentError("Schur preconditioner: no primary field"))
+    A = get_sparse_matrix(A_csr)
+    block(i) = ((i - 1) * n_cells + 1):(i * n_cells)
+    schur = reduce(vcat, collect(block(i)) for i in sort(collect(schur_blocks)))
+    primary = reduce(vcat, collect(block(i)) for i in 1:n_vars if i ∉ schur_blocks)
+
+    App = A[primary, primary]
+    Bt = A[primary, schur]
+    D = if approximation === :diag
+        diag(App)
+    elseif approximation === :rowsum
+        vec(sum(abs, App; dims=2))
+    else
+        throw(ArgumentError("Schur approximation :$approximation (valid: :diag, :rowsum)"))
+    end
+    S = A[schur, schur] - A[schur, primary] * Diagonal(map(_safe_inv_diag, D)) * Bt
+
+    FA = lu(App; check=false)
+    issuccess(FA) || throw(ArgumentError(
+        "Schur preconditioner: the primary block is singular; check the constraint fields"))
+    FS = lu(S; check=false)
+    if !issuccess(FS)
+        shift = 1e-10 * maximum(abs, diag(S); init=one(eltype(S)))
+        FS = lu(S + shift * I)
+    end
+    TF = eltype(A)
+    return MonolithicSchur(primary, schur, FA, FS, Bt, zeros(TF, length(primary)), zeros(TF, length(schur)))
+end
+
+_safe_inv_diag(d) = iszero(d) ? one(d) : inv(d)
+
+function LinearAlgebra.ldiv!(y::AbstractVector, P::MonolithicSchur, x::AbstractVector)
+    P.xs .= P.FS \ x[P.schur]
+    P.xp .= x[P.primary] .- P.Bt * P.xs
+    y[P.primary] .= P.FA \ P.xp
+    y[P.schur] .= P.xs
+    return y
+end
+
+# blocks whose diagonal block is weaker than their coupling to other fields
+function _auto_schur_blocks(A_csr, n_vars, n_cells)
+    self = zeros(n_vars); coupling = zeros(n_vars)
+    @inbounds for row in 1:A_csr.m
+        i = (row - 1) ÷ n_cells + 1
+        for nzi in A_csr.rowptr[row]:(A_csr.rowptr[row + 1] - 1)
+            j = (A_csr.colval[nzi] - 1) ÷ n_cells + 1
+            v = abs(A_csr.nzval[nzi])
+            i == j ? (self[i] += v) : (coupling[i] += v)
+        end
+    end
+    blocks = [i for i in 1:n_vars if self[i] < coupling[i]]
+    isempty(blocks) && throw(ArgumentError(
+        "Schur preconditioner: no field block is weaker than its coupling; name the constraint " *
+        "fields with SchurSplit(p, ...)"))
+    return blocks
+end
+
+_schur_block_index(sys, i::Integer) = i
+_schur_block_index(sys, phi) = sys.field_to_idx[objectid(phi.values)]
+
+function _block_preconditioner(kind, A_op, mesh, config, sys=nothing)
     A_csr = parent(A_op)
     n_cells = length(mesh.cells)
-    P = MonolithicBlockJacobi(A_csr, size(A_csr, 1) ÷ n_cells, n_cells)
+    n_vars = size(A_csr, 1) ÷ n_cells
+    if kind === :blockjacobi
+        P = MonolithicBlockJacobi(A_csr, n_vars, n_cells)
+    elseif kind === :schur || (kind isa SchurSplit && isempty(kind.fields))
+        approximation = kind isa SchurSplit ? kind.approximation : :diag
+        P = MonolithicSchur(A_csr, n_vars, n_cells, _auto_schur_blocks(A_csr, n_vars, n_cells);
+                            approximation)
+    elseif kind isa SchurSplit
+        blocks = [_schur_block_index(sys, f) for f in kind.fields]
+        P = MonolithicSchur(A_csr, n_vars, n_cells, blocks; approximation=kind.approximation)
+    else
+        throw(ArgumentError("Unknown monolithic preconditioner :$kind " *
+            "(valid: :blockjacobi, :schur, SchurSplit(fields...), or a field preconditioner)"))
+    end
     return (M=P, ldiv=true, storage=P)
 end
 
@@ -336,7 +458,7 @@ function solve_monolithic!(
         col_scale = equilibrate ? _equilibrate_csr!(A_csr, b_mono) : nothing
 
         A_op = SparseXCSR(A_csr)
-        precon = _monolithic_preconditioner(setup.preconditioner, A_op, mesh, config)
+        precon = _monolithic_preconditioner(setup.preconditioner, A_op, mesh, config, sys)
         x0 = extract_global_vector(sys)
         krylov_x0 = equilibrate ? x0 ./ col_scale : x0
 
@@ -399,7 +521,8 @@ end
 
 Solve a CPU monolithic block system with assembled Newton linearisation.
 `equilibrate=true` row/column-scales each correction system; `preconditioner=:blockjacobi`
-uses `MonolithicBlockJacobi` (exact LU of each field block) for the Krylov solve.
+uses `MonolithicBlockJacobi` (exact LU of each field block), and `:schur` or `SchurSplit(p)`
+uses `MonolithicSchur` (saddle-point systems) for the Krylov solve.
 Operators explicitly bound to another scalar field are routed to the
 corresponding off-diagonal block. General multivariate nonlinear maps and GPU
 linearisation are not yet supported.
@@ -471,7 +594,7 @@ function newton_solve!(
 
         # 4. Solve the linear system
         A_op = SparseXCSR(A_homo)
-        precon = _monolithic_preconditioner(setup.preconditioner, A_op, sys.phi_list[1].mesh, config)
+        precon = _monolithic_preconditioner(setup.preconditioner, A_op, sys.phi_list[1].mesh, config, sys)
         # Using a very tight inner tolerance for the Newton step
         krylov_solve!(
             ws, A_op, b_homo;

@@ -157,11 +157,19 @@ Status: the block pattern is taken from the terms of each equation
 blocks are allocated. `newton_solve!` takes `equilibrate=true` like
 `solve_monolithic!`, and both take `preconditioner=:blockjacobi`
 (`MonolithicBlockJacobi`: exact LU per field block, diagonal fallback for a
-singular block). Newton returns `linear_iterations`. Tests:
-`test/unit_test_monolithic_scaling.jl`. Open: a Schur-complement or
-pressure-convection preconditioner for saddle-point (Stokes, viscoelastic)
-blocks, where block-Jacobi only preconditions the velocity; AMG instead of
-LU per block for larger meshes; reuse of the sparsity across Newton steps.
+singular block). Newton returns `linear_iterations`. Saddle-point systems
+take `preconditioner=SchurSplit(p)` or `:schur` (automatic: blocks weaker
+than their coupling): `MonolithicSchur`, block upper-triangular with an
+exact LU of the primary block and the SIMPLE (`:diag`) or SIMPLEC
+(`:rowsum`) Schur approximation S = C - B diag(A)⁻¹ Bᵀ. Lid-driven cavity
+with weak stabilisation (1e-4): GMRES 27/74/139 iterations on 100/1600/10000
+cells against 131/786/not converged (3000) for block-Jacobi; Oldroyd-B
+channel 2-5 per step; stabilised bend 4 (block-Jacobi 6, none 2176).
+Tests: `test/unit_test_monolithic_scaling.jl`. Open: iteration growth with
+refinement (S from diag(A) is not spectrally equivalent; an approximate
+A⁻¹ with AMG, or a pressure-convection-diffusion/LSC S); AMG instead of LU
+for the primary block and S on larger meshes; reuse of the sparsity and
+factorisations across Newton steps.
 
 Mitigation:
 - Declare the block dependency graph before allocating sparsity.
