@@ -13,7 +13,8 @@ concurrency:
 
 jobs:
   test:
-    if: github.event.action != 'closed'
+    # full matrix on the upstream repository only; forks run fork-CI.yml
+    if: github.event.action != 'closed' && github.repository == 'mberto79/XCALibre.jl'
     name: Julia ${{ matrix.version }} - ${{ matrix.tier }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60

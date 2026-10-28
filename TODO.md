@@ -165,11 +165,40 @@ exact LU of the primary block and the SIMPLE (`:diag`) or SIMPLEC
 with weak stabilisation (1e-4): GMRES 27/74/139 iterations on 100/1600/10000
 cells against 131/786/not converged (3000) for block-Jacobi; Oldroyd-B
 channel 2-5 per step; stabilised bend 4 (block-Jacobi 6, none 2176).
-Tests: `test/unit_test_monolithic_scaling.jl`. Open: iteration growth with
-refinement (S from diag(A) is not spectrally equivalent; an approximate
-A⁻¹ with AMG, or a pressure-convection-diffusion/LSC S); AMG instead of LU
-for the primary block and S on larger meshes; reuse of the sparsity and
-factorisations across Newton steps.
+Tests: `test/unit_test_monolithic_scaling.jl`. The block preconditioners
+refactorise into the LU objects of the previous outer/Newton iteration
+(same pattern, UMFPACK keeps the symbolic analysis): Schur setup 0.23 s ->
+0.057 s on 10000 cells, identical result.
+
+Schur preconditioner, next steps (theory in splittingSchemes2,
+`sec:monolithicSchur`):
+1. Iterations grow with refinement (27/74/139 on 100/1600/10000 cells,
+   about h^-0.7). S = C - B diag(A)⁻¹ Bᵀ is a Laplacian scaled by h², not
+   spectrally equivalent to the exact Schur complement. Tried: SIMPLEC
+   (`:rowsum`, no gain) and the pressure mass matrix S = C + V/mu
+   (51/179/150, worse: collocated FV with weak stabilisation is not inf-sup
+   stable, so the mass-matrix equivalence does not hold). To try: LSC
+   (least-squares commutator, S⁻¹ = (B Bᵀ)⁻¹ B A Bᵀ (B Bᵀ)⁻¹ with diagonal
+   scaling), PCD (pressure convection-diffusion, needs a pressure-space
+   copy of the momentum operator, natural with `OperatorTemplate` bound to
+   p), and S from a few AMG/ILU sweeps of A instead of diag(A).
+2. Inexact inner solves: replace the LU of the primary block by one AMG
+   V-cycle (upstream `AMG/`) per field block, with flexible GMRES when the
+   inner solve is itself a Krylov method. Needed for meshes beyond ~1e5
+   cells, and for GPU (LU is CPU only).
+3. S by AMG instead of LU (S keeps a compact second-neighbour stencil).
+4. Lagged numeric factorisation: refactorise every k Newton steps, or when
+   the Krylov count grows past a threshold (`preconditioner_refresh`).
+   Symbolic reuse is done.
+5. Viscoelastic (u, p, tau): eliminate the stress first with the cell-local
+   dense elimination of splittingSchemes2 (the stress block is mass-like
+   plus transport), then the u-p Schur complement; compare with the
+   current single split (tau in the primary block, exact LU).
+6. Block lower-triangular and symmetric (block LDU) variants, and the
+   interplay with `equilibrate` (S is built from the scaled matrix; check
+   that the automatic Schur-block detection is scale invariant).
+7. Expose the same preconditioners to the segregated algorithms (SIMPLE /
+   PISO pressure equation is this S applied once, without Krylov).
 
 Mitigation:
 - Declare the block dependency graph before allocating sparsity.

@@ -3,7 +3,6 @@ using Test
 using LinearAlgebra
 using SparseArrays
 using SparseMatricesCSR
-using Krylov
 using Random
 
 grids_dir = pkgdir(XCALibre, "examples/0_GRIDS")
@@ -92,8 +91,7 @@ end
 end
 
 @testset "Schur preconditioner algebra" begin
-    # [D Bᵀ; B C] with D diagonal: S = C - B D⁻¹ Bᵀ is the exact Schur complement, so the block
-    # upper-triangular preconditioner leaves GMRES two iterations
+    # [D Bᵀ; B C] with D diagonal: S = C - B D⁻¹ Bᵀ is the exact Schur complement
     n = 30
     D = spdiagm(0 => 2.0 .+ (1:n) ./ n)
     B = 0.1 * sprand(MersenneTwister(1), n, n, 0.2) + 0.1I
@@ -107,12 +105,24 @@ end
     y = similar(z)
     ldiv!(y, P, Pz)
     @test y ≈ z
-    rhs = A * ones(2n)
-    x, stats = Krylov.gmres(A, rhs; M=P, ldiv=true, atol=1e-12, rtol=1e-12)
-    @test stats.solved
-    @test stats.niter <= 2
-    @test x ≈ ones(2n)
+    # exact S: P⁻¹A = I + N with N² = 0, so GMRES converges in two iterations
+    PinvA = similar(Matrix(A))
+    for j in 1:2n
+        ldiv!(view(PinvA, :, j), P, Vector(A[:, j]))
+    end
+    N = PinvA - I
+    @test norm(N * N) <= 1e-10 * max(norm(N), 1)
     @test XCALibre.Solve._auto_schur_blocks(A_csr, 2, n) == [2]
+
+    # refactorisation into the previous LU objects (same pattern) gives the same preconditioner
+    A_csr.nzval .*= 2
+    P2 = MonolithicSchur(A_csr, 2, n, [2]; previous=P)
+    @test P2.FA === P.FA && P2.FS === P.FS
+    y2 = similar(z); ldiv!(y2, P2, Pz)
+    @test y2 ≈ z ./ 2
+    BJ = MonolithicBlockJacobi(A_csr, 2, n)
+    BJ2 = MonolithicBlockJacobi(A_csr, 2, n; previous=BJ)
+    @test BJ2.factors[1] === BJ.factors[1]
 end
 
 @testset "Schur preconditioner on weakly stabilised Stokes" begin

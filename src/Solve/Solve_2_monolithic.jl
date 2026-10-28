@@ -22,10 +22,13 @@ function _monolithic_solver_setup(config, use_preconditioner, preconditioner=not
     return (solver=setup.solver, preconditioner=preconditioner)
 end
 
-function _monolithic_preconditioner(preconditioner_type, A_op, mesh, config, sys=nothing)
+# `previous` is the preconditioner of the last outer/Newton iteration: block preconditioners
+# refactorise into its LU objects, keeping the symbolic analysis of the unchanged sparsity
+function _monolithic_preconditioner(preconditioner_type, A_op, mesh, config, sys=nothing,
+                                    previous=nothing)
     preconditioner_type === nothing && return (M=I, ldiv=false, storage=nothing)
     preconditioner_type isa Union{Symbol,SchurSplit} &&
-        return _block_preconditioner(preconditioner_type, A_op, mesh, config, sys)
+        return _block_preconditioner(preconditioner_type, A_op, mesh, config, sys, previous)
 
     P = Preconditioner{typeof(preconditioner_type)}(A_op)
     update_preconditioner!(P, mesh, config)
@@ -145,17 +148,32 @@ struct MonolithicBlockJacobi{R,F}
     factors::F
 end
 
-function _block_factor(B)
-    F = lu(B; check=false)
+# numeric refactorisation into the previous LU (same pattern: UMFPACK keeps the symbolic
+# analysis); a fresh LU when there is none or the pattern changed
+_lu(B, previous) = lu(B; check=false)
+function _lu(B, previous::SparseArrays.UMFPACK.UmfpackLU)
+    size(previous) == size(B) || return lu(B; check=false)
+    try
+        return lu!(previous, B; check=false)
+    catch
+        return lu(B; check=false)
+    end
+end
+
+function _block_factor(B, previous=nothing)
+    F = _lu(B, previous)
     issuccess(F) && return F
     d = Vector(diag(B))
     return Diagonal(map(x -> iszero(x) ? one(x) : x, d))
 end
 
-function MonolithicBlockJacobi(A_csr::SparseMatricesCSR.SparseMatrixCSR, n_vars, n_cells)
+function MonolithicBlockJacobi(A_csr::SparseMatricesCSR.SparseMatrixCSR, n_vars, n_cells;
+                               previous=nothing)
     A = get_sparse_matrix(A_csr)
     ranges = [((i - 1) * n_cells + 1):(i * n_cells) for i in 1:n_vars]
-    factors = Tuple(_block_factor(A[r, r]) for r in ranges)
+    old = previous isa MonolithicBlockJacobi && previous.ranges == ranges ?
+        previous.factors : ntuple(_ -> nothing, n_vars)
+    factors = Tuple(_block_factor(A[r, r], old[i]) for (i, r) in enumerate(ranges))
     return MonolithicBlockJacobi(ranges, factors)
 end
 
@@ -214,7 +232,7 @@ struct MonolithicSchur{FA,FS,M,V}
 end
 
 function MonolithicSchur(A_csr::SparseMatricesCSR.SparseMatrixCSR, n_vars, n_cells, schur_blocks;
-                         approximation=:diag)
+                         approximation=:diag, previous=nothing)
     isempty(schur_blocks) && throw(ArgumentError("Schur preconditioner: no constraint field"))
     length(schur_blocks) < n_vars || throw(ArgumentError("Schur preconditioner: no primary field"))
     A = get_sparse_matrix(A_csr)
@@ -233,10 +251,11 @@ function MonolithicSchur(A_csr::SparseMatricesCSR.SparseMatrixCSR, n_vars, n_cel
     end
     S = A[schur, schur] - A[schur, primary] * Diagonal(map(_safe_inv_diag, D)) * Bt
 
-    FA = lu(App; check=false)
+    reuse = previous isa MonolithicSchur && previous.schur == schur
+    FA = _lu(App, reuse ? previous.FA : nothing)
     issuccess(FA) || throw(ArgumentError(
         "Schur preconditioner: the primary block is singular; check the constraint fields"))
-    FS = lu(S; check=false)
+    FS = _lu(S, reuse ? previous.FS : nothing)
     if !issuccess(FS)
         shift = 1e-10 * maximum(abs, diag(S); init=one(eltype(S)))
         FS = lu(S + shift * I)
@@ -276,19 +295,19 @@ end
 _schur_block_index(sys, i::Integer) = i
 _schur_block_index(sys, phi) = sys.field_to_idx[objectid(phi.values)]
 
-function _block_preconditioner(kind, A_op, mesh, config, sys=nothing)
+function _block_preconditioner(kind, A_op, mesh, config, sys=nothing, previous=nothing)
     A_csr = parent(A_op)
     n_cells = length(mesh.cells)
     n_vars = size(A_csr, 1) ÷ n_cells
     if kind === :blockjacobi
-        P = MonolithicBlockJacobi(A_csr, n_vars, n_cells)
+        P = MonolithicBlockJacobi(A_csr, n_vars, n_cells; previous)
     elseif kind === :schur || (kind isa SchurSplit && isempty(kind.fields))
         approximation = kind isa SchurSplit ? kind.approximation : :diag
         P = MonolithicSchur(A_csr, n_vars, n_cells, _auto_schur_blocks(A_csr, n_vars, n_cells);
-                            approximation)
+                            approximation, previous)
     elseif kind isa SchurSplit
         blocks = [_schur_block_index(sys, f) for f in kind.fields]
-        P = MonolithicSchur(A_csr, n_vars, n_cells, blocks; approximation=kind.approximation)
+        P = MonolithicSchur(A_csr, n_vars, n_cells, blocks; approximation=kind.approximation, previous)
     else
         throw(ArgumentError("Unknown monolithic preconditioner :$kind " *
             "(valid: :blockjacobi, :schur, SchurSplit(fields...), or a field preconditioner)"))
@@ -449,6 +468,7 @@ function solve_monolithic!(
 
     res = TF(NaN)
     stats_history = []
+    precon_storage = nothing
     for iter in 1:iterations
         A_csr, b_mono = assemble_monolithic_system(sys, bcs_list, config)
         _apply_reference_argument!(A_csr, b_mono, sys, reference)
@@ -458,7 +478,9 @@ function solve_monolithic!(
         col_scale = equilibrate ? _equilibrate_csr!(A_csr, b_mono) : nothing
 
         A_op = SparseXCSR(A_csr)
-        precon = _monolithic_preconditioner(setup.preconditioner, A_op, mesh, config, sys)
+        precon = _monolithic_preconditioner(setup.preconditioner, A_op, mesh, config, sys,
+                                            precon_storage)
+        precon_storage = precon.storage
         x0 = extract_global_vector(sys)
         krylov_x0 = equilibrate ? x0 ./ col_scale : x0
 
@@ -555,6 +577,7 @@ function newton_solve!(
     solver_type = setup.solver
     ws = _workspace(solver_type, zeros(TF, N))
     r_mono = zeros(TF, N)
+    precon_storage = nothing
 
     for iter in 1:maxiter
         # 1. Linearize all equations
@@ -594,7 +617,9 @@ function newton_solve!(
 
         # 4. Solve the linear system
         A_op = SparseXCSR(A_homo)
-        precon = _monolithic_preconditioner(setup.preconditioner, A_op, sys.phi_list[1].mesh, config, sys)
+        precon = _monolithic_preconditioner(setup.preconditioner, A_op, sys.phi_list[1].mesh, config,
+                                            sys, precon_storage)
+        precon_storage = precon.storage
         # Using a very tight inner tolerance for the Newton step
         krylov_solve!(
             ws, A_op, b_homo;

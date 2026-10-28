@@ -1,0 +1,44 @@
+# Development fork CI: the unit tier on the latest Julia on push to main.
+# The full matrix (Julia 1.10, cases, distributed) is upstream's CI.yml, which
+# runs on the upstream repository and on pull requests opened there. Run any
+# tier here by hand from the Actions tab (workflow_dispatch).
+name: fork CI
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "Test tier: unit, cases or distributed (comma separated)"
+        default: unit
+      version:
+        description: "Julia version"
+        default: '1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    if: github.repository != 'mberto79/XCALibre.jl'
+    name: Julia ${{ inputs.version || '1' }} - ${{ inputs.tier || 'unit' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ inputs.version || '1' }}
+      - uses: julia-actions/cache@v3
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-runtest@v1
+        env:
+          XCALIBRE_TEST_MAX_RANKS: 3
+        with:
+          test_args: ${{ inputs.tier || 'unit' }}
+          coverage: false
