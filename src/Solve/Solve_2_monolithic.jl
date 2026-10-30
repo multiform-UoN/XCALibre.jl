@@ -185,19 +185,23 @@ function LinearAlgebra.ldiv!(y::AbstractVector, P::MonolithicBlockJacobi, x::Abs
 end
 
 """
-    SchurSplit(fields...; approximation=:diag)
-    SchurSplit()
+    SchurSplit(fields...; approximation=:auto, viscosity=nothing)
+    SchurSplit(; approximation=:auto, viscosity=nothing)
 
 Selects `MonolithicSchur` with `fields` (scalar fields of the system, or their block indices) as
-the constraint fields, e.g. `SchurSplit(p)` for Stokes. `SchurSplit()` and `preconditioner=:schur`
-pick them automatically (see `MonolithicSchur`). `approximation` is the A⁻¹ inside S: `:diag`
-(SIMPLE) or `:rowsum` (SIMPLEC, absolute row sums of A).
+the constraint fields, e.g. `SchurSplit(p; viscosity=nu)` for Stokes. Without fields, and with
+`preconditioner=:schur`, they are picked automatically (see `MonolithicSchur`). `approximation`
+sets S: `:mass` (C + V/μ), `:diag` (SIMPLE), `:rowsum` (SIMPLEC) or `:auto`. `viscosity` (number,
+`ConstantScalar`, `ScalarField` or vector of cell values) is needed by `:mass` and by `:auto` to
+choose it; `:schur` alone uses `:diag`.
 """
-struct SchurSplit{F<:Tuple}
+struct SchurSplit{F<:Tuple,V}
     fields::F
     approximation::Symbol
+    viscosity::V
 end
-SchurSplit(fields...; approximation=:diag) = SchurSplit(fields, approximation)
+SchurSplit(fields...; approximation=:auto, viscosity=nothing) =
+    SchurSplit(fields, approximation, viscosity)
 
 """
     MonolithicSchur(A_csr, n_vars, n_cells, schur_blocks)
@@ -207,15 +211,28 @@ unknowns are split into primary fields (velocity, stresses, displacement) and co
 (`schur_blocks`, e.g. pressure), with blocks A (primary), Bᵀ (primary rows, constraint columns),
 B and C (constraint rows):
 
-    P = [A  Bᵀ]        S = C - B diag(A)⁻¹ Bᵀ
+    P = [A  Bᵀ]
         [0  S ]
 
 A is factorised exactly (sparse LU of the whole primary block, including the coupling between
-primary fields); S is the SIMPLE-type approximation of the Schur complement, assembled and
-factorised. With an exact S, GMRES on P⁻¹ converges in two iterations; the diagonal approximation
-of A⁻¹ inside S (`approximation=:diag`, SIMPLE, or `:rowsum`, SIMPLEC) is what the iteration
-count measures. A singular S (a pressure without a reference
-row or gauge) is shifted by 1e-10 of its largest diagonal entry. CPU only.
+primary fields) and S, an approximation of the Schur complement C - B A⁻¹ Bᵀ, is assembled and
+factorised. With an exact S, GMRES on P⁻¹ converges in two iterations, so the iteration count
+measures the quality of S (`approximation`):
+
+- `:diag`: S = C - B diag(A)⁻¹ Bᵀ (SIMPLE); `:rowsum`: absolute row sums of A (SIMPLEC).
+- `:mass`: S = C ± diag(V/μ), the pressure mass matrix over the viscosity (`viscosity`, `volumes`
+  of the cells), with the sign of -B A⁻¹ Bᵀ. Collocated gradient and divergence miss the
+  checkerboard modes: B A⁻¹ Bᵀ ≈ M/μ on smooth modes and ≈ 0 on checkerboards, where S ≈ C. When
+  C scales like h²/μ (Brezzi-Pitkäranta, Rhie-Chow V/a_P in viscous flow), C + M/μ is spectrally
+  equivalent to S uniformly in h and the iteration count does not grow with refinement; with a
+  weaker C it is worse than `:diag`. Rows of the constraint block without coupling (reference
+  rows) get no mass. For steady (Stokes-like) primary blocks: a time or reaction term in A needs
+  a Cahouet-Chabard S, not implemented.
+- `:auto`: `:mass` when `viscosity` is given and the stabilisation is h²-scaled, median of
+  |C_ii| μ/V_i ≥ `SCHUR_MASS_RATIO` (= 4α for ε = αh² on a Cartesian mesh), otherwise `:diag`.
+
+A singular S (a pressure without a reference row or gauge) is shifted by 1e-10 of its largest
+diagonal entry. CPU only.
 
 Automatic selection (`preconditioner=:schur`): a field block is a constraint block when its
 diagonal block is weaker than its coupling, mean row sum of |A_ii| < mean row sum of |A_ij|, j ≠ i
@@ -224,6 +241,7 @@ diagonal block is weaker than its coupling, mean row sum of |A_ii| < mean row su
 struct MonolithicSchur{FA,FS,M,V}
     primary::Vector{Int}
     schur::Vector{Int}
+    approximation::Symbol
     FA::FA
     FS::FS
     Bt::M
@@ -232,7 +250,8 @@ struct MonolithicSchur{FA,FS,M,V}
 end
 
 function MonolithicSchur(A_csr::SparseMatricesCSR.SparseMatrixCSR, n_vars, n_cells, schur_blocks;
-                         approximation=:diag, previous=nothing)
+                         approximation=:diag, viscosity=nothing, volumes=nothing,
+                         previous=nothing)
     isempty(schur_blocks) && throw(ArgumentError("Schur preconditioner: no constraint field"))
     length(schur_blocks) < n_vars || throw(ArgumentError("Schur preconditioner: no primary field"))
     A = get_sparse_matrix(A_csr)
@@ -242,16 +261,26 @@ function MonolithicSchur(A_csr::SparseMatricesCSR.SparseMatrixCSR, n_vars, n_cel
 
     App = A[primary, primary]
     Bt = A[primary, schur]
-    D = if approximation === :diag
-        diag(App)
-    elseif approximation === :rowsum
-        vec(sum(abs, App; dims=2))
-    else
-        throw(ArgumentError("Schur approximation :$approximation (valid: :diag, :rowsum)"))
+    B = A[schur, primary]
+    C = A[schur, schur]
+    if approximation === :auto
+        approximation = _schur_mass_applies(C, B, viscosity, volumes, length(schur_blocks)) ?
+            :mass : :diag
     end
-    S = A[schur, schur] - A[schur, primary] * Diagonal(map(_safe_inv_diag, D)) * Bt
+    S = if approximation === :mass
+        (viscosity === nothing || volumes === nothing) && throw(ArgumentError(
+            "Schur approximation :mass needs the viscosity and the cell volumes"))
+        _schur_mass(C, B, App, Bt, viscosity, volumes, length(schur_blocks))
+    elseif approximation === :diag
+        C - B * Diagonal(map(_safe_inv_diag, diag(App))) * Bt
+    elseif approximation === :rowsum
+        C - B * Diagonal(map(_safe_inv_diag, vec(sum(abs, App; dims=2)))) * Bt
+    else
+        throw(ArgumentError("Schur approximation :$approximation (valid: :auto, :mass, :diag, :rowsum)"))
+    end
 
-    reuse = previous isa MonolithicSchur && previous.schur == schur
+    reuse = previous isa MonolithicSchur && previous.schur == schur &&
+        previous.approximation === approximation
     FA = _lu(App, reuse ? previous.FA : nothing)
     issuccess(FA) || throw(ArgumentError(
         "Schur preconditioner: the primary block is singular; check the constraint fields"))
@@ -261,10 +290,41 @@ function MonolithicSchur(A_csr::SparseMatricesCSR.SparseMatrixCSR, n_vars, n_cel
         FS = lu(S + shift * I)
     end
     TF = eltype(A)
-    return MonolithicSchur(primary, schur, FA, FS, Bt, zeros(TF, length(primary)), zeros(TF, length(schur)))
+    return MonolithicSchur(primary, schur, approximation, FA, FS, Bt, zeros(TF, length(primary)), zeros(TF, length(schur)))
 end
 
 _safe_inv_diag(d) = iszero(d) ? one(d) : inv(d)
+
+# median |C_ii| μ/V_i above which the pressure stabilisation counts as h²-scaled (ε ≥ h²/40)
+const SCHUR_MASS_RATIO = 0.1
+
+_cell_values(mu::Number, n) = fill(float(mu), n)
+_cell_values(mu::ConstantScalar, n) = fill(float(mu.values), n)
+_cell_values(mu::ScalarField, n) = Vector(mu.values)
+_cell_values(mu::AbstractVector, n) = Vector(mu)
+
+# V/μ on the constraint rows (one copy per constraint block), zero on uncoupled (reference) rows
+function _schur_mass_diagonal(B, viscosity, volumes, n_blocks)
+    n = length(volumes)
+    m = repeat(Vector(volumes) ./ _cell_values(viscosity, n), n_blocks)
+    coupled = vec(sum(abs, B; dims=2)) .> 0
+    return m .* coupled
+end
+
+function _schur_mass_applies(C, B, viscosity, volumes, n_blocks)
+    (viscosity === nothing || volumes === nothing) && return false
+    m = _schur_mass_diagonal(B, viscosity, volumes, n_blocks)
+    ratios = [abs(C[i, i]) / m[i] for i in eachindex(m) if m[i] > 0]
+    isempty(ratios) && return false
+    return sort!(ratios)[(length(ratios) + 1) ÷ 2] >= SCHUR_MASS_RATIO
+end
+
+function _schur_mass(C, B, App, Bt, viscosity, volumes, n_blocks)
+    m = _schur_mass_diagonal(B, viscosity, volumes, n_blocks)
+    # sign of -B A⁻¹ Bᵀ relative to C, from its SIMPLE estimate
+    simple = -sum(diag(B * Diagonal(map(_safe_inv_diag, diag(App))) * Bt))
+    return C + (simple < 0 ? -1 : 1) * Diagonal(m)
+end
 
 function LinearAlgebra.ldiv!(y::AbstractVector, P::MonolithicSchur, x::AbstractVector)
     P.xs .= P.FS \ x[P.schur]
@@ -301,13 +361,15 @@ function _block_preconditioner(kind, A_op, mesh, config, sys=nothing, previous=n
     n_vars = size(A_csr, 1) ÷ n_cells
     if kind === :blockjacobi
         P = MonolithicBlockJacobi(A_csr, n_vars, n_cells; previous)
-    elseif kind === :schur || (kind isa SchurSplit && isempty(kind.fields))
-        approximation = kind isa SchurSplit ? kind.approximation : :diag
+    elseif kind === :schur
         P = MonolithicSchur(A_csr, n_vars, n_cells, _auto_schur_blocks(A_csr, n_vars, n_cells);
-                            approximation, previous)
+                            previous)
     elseif kind isa SchurSplit
-        blocks = [_schur_block_index(sys, f) for f in kind.fields]
-        P = MonolithicSchur(A_csr, n_vars, n_cells, blocks; approximation=kind.approximation, previous)
+        blocks = isempty(kind.fields) ? _auto_schur_blocks(A_csr, n_vars, n_cells) :
+            [_schur_block_index(sys, f) for f in kind.fields]
+        volumes = kind.viscosity === nothing ? nothing : [c.volume for c in mesh.cells]
+        P = MonolithicSchur(A_csr, n_vars, n_cells, blocks; approximation=kind.approximation,
+                            viscosity=kind.viscosity, volumes, previous)
     else
         throw(ArgumentError("Unknown monolithic preconditioner :$kind " *
             "(valid: :blockjacobi, :schur, SchurSplit(fields...), or a field preconditioner)"))

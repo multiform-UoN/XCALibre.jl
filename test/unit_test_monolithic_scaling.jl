@@ -167,3 +167,46 @@ end
     @test its["schur"] == its["auto"]
     @test its["schur"] < its["blockjacobi"]
 end
+
+@testset "Schur mass approximation with h²-scaled stabilisation" begin
+    # lid cavity, Stokes with pressure stabilisation ε = α h²: C + V/μ is h-uniform, SIMPLE is not
+    function cavity_iterations(grid, alpha, pc_of)
+        m = adapt(backend, UNV2D_mesh(joinpath(grids_dir, grid), scale=0.025))
+        vol = [c.volume for c in m.cells]
+        ε = alpha * sum(vol) / length(vol)
+        W = (:top, :bottom, :inlet, :outlet)
+        u = ScalarField(m); v = ScalarField(m); p = ScalarField(m)
+        foreach(f -> initialise!(f, 0.0), (u, v, p))
+        BCs = assign(region=m, (
+            u = [Dirichlet(:top, 1.0), Dirichlet(:bottom, 0.0), Dirichlet(:inlet, 0.0),
+                 Dirichlet(:outlet, 0.0)],
+            v = [Dirichlet(w, 0.0) for w in W],
+            p = [Zerogradient(w) for w in W],
+        ))
+        one_cst = ConstantScalar(1.0)
+        L_u = (-Laplacian{Linear}(one_cst) + ScalarGrad{Linear,1}(one_cst, p) == Source(0.0)) → BCs.u
+        L_v = (-Laplacian{Linear}(one_cst) + ScalarGrad{Linear,2}(one_cst, p) == Source(0.0)) → BCs.v
+        L_p = (-Laplacian{Linear}(ConstantScalar(ε)) + VectorDiv{Linear,1}(one_cst, u)
+               + VectorDiv{Linear,2}(one_cst, v) == Source(0.0)) → BCs.p
+        sys = MonolithicSystem([L_u(u), L_v(v), L_p(p)], [u, v, p])
+        config = scaling_config((:u, :v, :p), BCs)
+        d = solve_monolithic!(sys, config; reference=(3, 0.0, 1), preconditioner=pc_of(p),
+                              diagnostics=true)
+        @test d.linear[end].solved
+        return d.linear[end].gmres_iterations
+    end
+    grids = ("quad.unv", "quad40.unv")   # 100 and 1600 cells
+    mass = [cavity_iterations(g, 1.0, p -> SchurSplit(p; viscosity=1.0)) for g in grids]
+    forced = [cavity_iterations(g, 1.0, p -> SchurSplit(p; approximation=:mass, viscosity=1.0))
+              for g in grids]
+    simple = [cavity_iterations(g, 1.0, p -> SchurSplit(p; approximation=:diag)) for g in grids]
+    @test mass == forced                 # :auto picks :mass for ε = h²
+    @test mass[2] <= 1.7 * mass[1]       # measured 15 → 23 (→ 27 at 10⁴ cells)
+    @test simple[2] >= 2.5 * simple[1]   # measured 12 → 35 (→ 67)
+    @test mass[2] < simple[2]
+    # under-stabilised (ε = h²/4000): :auto falls back to :diag
+    weak_auto = cavity_iterations("quad40.unv", 1e-3, p -> SchurSplit(p; viscosity=1.0))
+    weak_diag = cavity_iterations("quad40.unv", 1e-3, p -> SchurSplit(p; approximation=:diag))
+    @test weak_auto == weak_diag
+    @test_throws ArgumentError cavity_iterations("quad.unv", 1.0, p -> SchurSplit(p; approximation=:mass))
+end

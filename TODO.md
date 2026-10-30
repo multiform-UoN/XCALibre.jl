@@ -160,8 +160,12 @@ blocks are allocated. `newton_solve!` takes `equilibrate=true` like
 singular block). Newton returns `linear_iterations`. Saddle-point systems
 take `preconditioner=SchurSplit(p)` or `:schur` (automatic: blocks weaker
 than their coupling): `MonolithicSchur`, block upper-triangular with an
-exact LU of the primary block and the SIMPLE (`:diag`) or SIMPLEC
-(`:rowsum`) Schur approximation S = C - B diag(A)⁻¹ Bᵀ. Lid-driven cavity
+exact LU of the primary block and the Schur approximation `:mass`
+(S = C ± V/mu, needs `SchurSplit(p; viscosity=mu)`), SIMPLE (`:diag`,
+S = C - B diag(A)⁻¹ Bᵀ) or SIMPLEC (`:rowsum`); `:auto` (default of
+`SchurSplit`) takes `:mass` when the viscosity is given and the pressure
+stabilisation is h²-scaled (median |C_ii| mu/V_i >= 0.1), otherwise `:diag`.
+Lid-driven cavity
 with weak stabilisation (1e-4): GMRES 27/74/139 iterations on 100/1600/10000
 cells against 131/786/not converged (3000) for block-Jacobi; Oldroyd-B
 channel 2-5 per step; stabilised bend 4 (block-Jacobi 6, none 2176).
@@ -172,16 +176,19 @@ refactorise into the LU objects of the previous outer/Newton iteration
 
 Schur preconditioner, next steps (theory in splittingSchemes2,
 `sec:monolithicSchur`):
-1. Iterations grow with refinement (27/74/139 on 100/1600/10000 cells,
-   about h^-0.7). S = C - B diag(A)⁻¹ Bᵀ is a Laplacian scaled by h², not
-   spectrally equivalent to the exact Schur complement. Tried: SIMPLEC
-   (`:rowsum`, no gain) and the pressure mass matrix S = C + V/mu
-   (51/179/150, worse: collocated FV with weak stabilisation is not inf-sup
-   stable, so the mass-matrix equivalence does not hold). To try: LSC
-   (least-squares commutator, S⁻¹ = (B Bᵀ)⁻¹ B A Bᵀ (B Bᵀ)⁻¹ with diagonal
-   scaling), PCD (pressure convection-diffusion, needs a pressure-space
-   copy of the momentum operator, natural with `OperatorTemplate` bound to
-   p), and S from a few AMG/ILU sweeps of A instead of diag(A).
+1. With an h²-scaled stabilisation (ε = αh²/mu, as Brezzi-Pitkäranta or
+   Rhie-Chow V/a_P in viscous flow) `:mass` is h-uniform: lid cavity
+   100/1600/10000 cells, α = 0.1: 20/28/30 (`:diag` 20/56/110); α = 1:
+   15/23/27 (12/35/67); α = 10: 10/17/22 (7/17/32). With a constant weak
+   ε = 1e-4 (α ≈ 1e-5 to 1e-3) it is worse than `:diag` (51/179/150 against
+   27/74/139): the checkerboard modes, invisible to collocated grad/div,
+   have S ≈ C, which then is far below V/mu. Open: a Rhie-Chow-consistent
+   stabilisation in the monolithic Stokes/Navier-Stokes examples so they
+   get `:mass`; transient or convective momentum (Cahouet-Chabard
+   S⁻¹ ≈ mu M⁻¹ + (Δt/ρ) L⁻¹, or PCD); arbitrary/weak stabilisation (LSC
+   for stabilised discretisations, Elman-Howle-Shadid-Silvester-Tuminaro
+   2008); the threshold of `:auto` is calibrated on Cartesian meshes only
+   (`SCHUR_MASS_RATIO`).
 2. Inexact inner solves: replace the LU of the primary block by one AMG
    V-cycle (upstream `AMG/`) per field block, with flexible GMRES when the
    inner solve is itself a Krylov method. Needed for meshes beyond ~1e5
